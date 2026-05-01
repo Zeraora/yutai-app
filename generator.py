@@ -87,6 +87,7 @@ def main() -> None:
         "pegs": {c: m["peg"] for c, m in metrics.items()},
         "earnings_growths": {c: m["earnings_growth"] for c, m in metrics.items()},
         "payout_ratios": {c: m["payout_ratio"] for c, m in metrics.items()},
+        "equity_ratios": {c: m["equity_ratio"] for c, m in metrics.items()},
         "rsis": rsis,
         "sma200s": sma200s,
         "rsi30_prices": rsi30s,

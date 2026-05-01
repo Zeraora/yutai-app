@@ -239,8 +239,36 @@ def _compute_avg_roe(ticker) -> float | None:
         return None
 
 
+def _compute_equity_ratio(ticker) -> float | None:
+    """自己資本比率 = 純資産 / 総資産 (直近年度)。"""
+    try:
+        balance = ticker.balance_sheet
+        if balance is None or balance.empty:
+            return None
+        eq_row = None
+        for key in ("Stockholders Equity", "Common Stock Equity", "Total Equity Gross Minority Interest"):
+            if key in balance.index:
+                eq_row = balance.loc[key]
+                break
+        ta_row = balance.loc["Total Assets"] if "Total Assets" in balance.index else None
+        if eq_row is None or ta_row is None or len(ta_row) == 0:
+            return None
+        # 直近(最新)カラム
+        latest = ta_row.index[0]
+        try:
+            eq = float(eq_row[latest])
+            ta = float(ta_row[latest])
+        except (KeyError, ValueError, TypeError):
+            return None
+        if ta <= 0 or math.isnan(eq) or math.isnan(ta):
+            return None
+        return eq / ta
+    except Exception:
+        return None
+
+
 def _fetch_metrics(code: str) -> tuple[str, dict[str, float | None]]:
-    """単一銘柄の各種指標を取得(B案11指標化対応)。"""
+    """単一銘柄の各種指標を取得(B案11指標化対応 + 自己資本比率)。"""
     try:
         t = yf.Ticker(f"{code}.T")
         info = t.info
@@ -252,6 +280,7 @@ def _fetch_metrics(code: str) -> tuple[str, dict[str, float | None]]:
         earnings_growth = info.get("earningsGrowth")
         payout_ratio = info.get("payoutRatio")
         avg_roe = _compute_avg_roe(t)
+        equity_ratio = _compute_equity_ratio(t)
         return code, {
             "roe": float(roe) if roe is not None else None,
             "per": float(per) if per is not None else None,
@@ -261,11 +290,13 @@ def _fetch_metrics(code: str) -> tuple[str, dict[str, float | None]]:
             "peg": float(peg) if peg is not None else None,
             "earnings_growth": float(earnings_growth) if earnings_growth is not None else None,
             "payout_ratio": float(payout_ratio) if payout_ratio is not None else None,
+            "equity_ratio": equity_ratio,
         }
     except Exception:
         return code, {"roe": None, "per": None, "avg_roe": None, "pbr": None,
                       "div_yield": None, "peg": None,
-                      "earnings_growth": None, "payout_ratio": None}
+                      "earnings_growth": None, "payout_ratio": None,
+                      "equity_ratio": None}
 
 
 def fetch_metrics() -> dict[str, dict[str, float | None]]:
@@ -287,6 +318,7 @@ def api_prices():
     pegs = {code: m["peg"] for code, m in metrics.items()}
     earnings_growths = {code: m["earnings_growth"] for code, m in metrics.items()}
     payout_ratios = {code: m["payout_ratio"] for code, m in metrics.items()}
+    equity_ratios = {code: m["equity_ratio"] for code, m in metrics.items()}
     verified = {s["code"]: s.get("last_verified") for s in STOCKS}
     return jsonify({
         "prices": prices,
@@ -305,6 +337,7 @@ def api_prices():
         "pegs": pegs,
         "earnings_growths": earnings_growths,
         "payout_ratios": payout_ratios,
+        "equity_ratios": equity_ratios,
         "verified": verified,
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
@@ -1780,13 +1813,13 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   <span id="status">起動時に自動取得します…</span>
   <span style="margin-left:auto"></span>
   <label style="font-size:0.9em">
-    優待取得必要額 ≤ <input type="number" id="f-cost-max" placeholder="無制限" step="10" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> 万円
+    優待取得必要額 ≤ <input type="number" id="f-cost-max" value="50" step="10" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> 万円
   </label>
   <label style="font-size:0.9em">
-    総合利回り ≥ <input type="number" id="f-yield-min" placeholder="無制限" step="0.5" min="0" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
+    総合利回り ≥ <input type="number" id="f-yield-min" value="3" step="0.5" min="0" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <label style="font-size:0.9em">
-    52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" placeholder="無制限" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
+    52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="40" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
 </div>
@@ -1840,7 +1873,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   let _sma200s = {}, _rsi30s = {};
   let _high52s = {}, _low52s = {};
   let _bbUppers = {}, _bbLowers = {}, _pbrs = {}, _divYields = {}, _pegs = {};
-  let _earningsGrowths = {}, _payoutRatios = {};
+  let _earningsGrowths = {}, _payoutRatios = {}, _equityRatios = {};
 
   function escapeHtml(s) {
     if (s == null) return '';
@@ -2203,9 +2236,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
             <span>ROE ${roe != null ? (roe*100).toFixed(1) + '%' : '—'}</span>
             <span>ROE平均 ${avgRoe != null ? (avgRoe*100).toFixed(1) + '%' : '—'}</span>
             <span>RSI週 ${rsi != null ? rsi.toFixed(1) : '—'}</span>
+            <span>自己資本比率 ${_equityRatios[s.code] != null ? (_equityRatios[s.code]*100).toFixed(0) + '%' : '—'}</span>
           </div>
-          <div class="comment">${s.analysis ? escapeHtml(s.analysis) : '<span style="color:#bbb">コメント未入力 — 編集ボタンで追加できます</span>'}</div>
-          <div class="optional"><strong style="font-size:0.85em">優待:</strong> <span style="font-size:0.85em">${escapeHtml(s.yutai)}</span> <span style="font-size:0.8em;color:#888">(${s.min_shares}株〜)</span></div>
           ${yieldBlockHtml(s, p, _divYields[s.code])}
           <div class="actions">
             <a href="https://finance.yahoo.co.jp/quote/${s.code}.T" target="_blank" rel="noopener">Y!</a>
@@ -2250,6 +2282,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       _pegs = data.pegs || {};
       _earningsGrowths = data.earnings_growths || {};
       _payoutRatios = data.payout_ratios || {};
+      _equityRatios = data.equity_ratios || {};
       render();
       status.textContent = `最終更新: ${data.fetched_at}`;
     } catch (e) {
