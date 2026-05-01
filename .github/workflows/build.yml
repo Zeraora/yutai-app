@@ -1,0 +1,52 @@
+name: Generate static watchlist
+
+on:
+  # 1時間ごとに自動実行(JST 0分)
+  schedule:
+    - cron: '0 * * * *'
+  # 手動トリガー
+  workflow_dispatch:
+  # ソース更新時(★追加・優待入力など)
+  push:
+    branches: [main]
+    paths:
+      - 'stocks.json'
+      - 'app.py'
+      - 'generator.py'
+      - 'requirements.txt'
+      - '.github/workflows/build.yml'
+
+# Pages デプロイ用権限
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate static HTML
+        run: python generator.py
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          if git diff --cached --quiet; then
+            echo "No changes detected"
+          else
+            git commit -m "Auto-update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
