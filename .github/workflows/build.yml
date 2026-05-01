@@ -3,7 +3,7 @@ name: Generate static watchlist
 on:
   # 1時間ごとに自動実行(JST 0分)
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * 1-5'
   # 手動トリガー
   workflow_dispatch:
   # ソース更新時(★追加・優待入力など)
