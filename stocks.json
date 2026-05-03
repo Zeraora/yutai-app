@@ -787,9 +787,9 @@
     "judgment": null,
     "target_price": null,
     "analysis": null,
-    "yutai_shares": null,
-    "yutai_value": null,
-    "yutai_item": null
+    "yutai_shares": 100.0,
+    "yutai_value": 4000.0,
+    "yutai_item": "優待券"
   },
   {
     "market": "プライム",
