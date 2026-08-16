@@ -2031,6 +2031,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .modal-actions .btn-save { background: #27ae60; color: #fff; }
   .modal-actions .btn-cancel { background: #95a5a6; color: #fff; }
   #watchlist-view .ic-grid { grid-template-columns: repeat(4, 1fr); }
+  #watchlist-view .vbadge.long-weak { background: #e67e22; }
+  #watchlist-view .vbadge.long-slump { background: #34495e; }
   .ic-rsi-sma.above { background: #e67e22; color: #fff; }
   .ic-rsi-sma.below { background: #2980b9; color: #fff; }
   .ic-rsi-sma.equal { background: #7f8c8d; color: #fff; }
@@ -2050,6 +2052,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .comparison-block .comparison-sep { color: #aaa; }
   .comparison-block .trend-tag { margin-left: auto; font-weight: bold; white-space: nowrap; }
   .comparison-block.long-slump { background: #eaecee; border-left-color: #34495e; color: #2c3e50; }
+  .comparison-block.long-weak { background: #fef5e7; border-left-color: #e67e22; color: #935116; }
   .comparison-block.recovery-watch { background: #f4ecf7; border-left-color: #8e44ad; color: #6c3483; }
 </style>
 </head>
@@ -2076,7 +2079,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 <div class="summary" id="summary">
   <strong>判定方式: 全<span id="watchlist-total"></span>銘柄を同じ株価履歴から計算できる3指標</strong><br>
   <span style="font-size:0.85em">
-  52週レンジ・週足RSI・ボリンジャーバンドのみ。3年前比・長期比・利回りは参考表示。ただし3年比と長期比が両方−3%未満の銘柄は最下部の長期低迷枠へ分離。<br>
+  52週レンジ・週足RSI・ボリンジャーバンドのみ。3年前比・長期比・利回りは参考表示。ただし10年前比が＋50%以下の銘柄は長期成長弱め枠へ、3年比と長期比が両方−3%未満の銘柄は最下部の長期低迷枠へ分離（上場・再上場から10年未満は弱め判定外）。<br>
   RSIは現在値と14SMAを別ブロック表示。オレンジ = RSIが14SMAより上 / 青 = 下（比較自体は判定外）。<br>
   BBは現在値が「-1σ〜0σ」「0σ〜+1σ」「+1σ〜+2σ」など、どの区間にいるかを表示。<br>
   チップ色: <span style="background:#27ae60;color:#fff;padding:1px 6px;border-radius:3px">✓ 0</span> = ペナルティなし /
@@ -2256,6 +2259,13 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const longChange = _longChanges[code];
     return change3y != null && longChange != null && change3y < -3 && longChange < -3;
   }
+  function isLongWeak(code) {
+    const longChange = _longChanges[code];
+    return !isLongSlump(code)
+      && _longLabels[code] === '10年前比'
+      && longChange != null
+      && longChange <= 50;
+  }
   function comparisonChangeHtml(changePct) {
     if (changePct == null) return '<span class="comparison-change flat">—</span>';
     let cls, arrow;
@@ -2280,9 +2290,11 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const longChange = _longChanges[code];
     const longLabel = comparisonPeriodLabel(_longLabels[code], _longYears[code]);
     const slump = isLongSlump(code);
+    const weak = isLongWeak(code);
     const recoveryWatch = change3y != null && change3y < -3 && longChange != null && longChange >= -3;
-    const blockCls = slump ? 'long-slump' : recoveryWatch ? 'recovery-watch' : '';
+    const blockCls = slump ? 'long-slump' : weak ? 'long-weak' : recoveryWatch ? 'recovery-watch' : '';
     const tag = slump ? '<span class="trend-tag">⚫ 長期低迷</span>'
+      : weak ? '<span class="trend-tag">🟠 長期成長弱め</span>'
       : recoveryWatch ? '<span class="trend-tag">🟣 長期成長の調整</span>' : '';
     const threeTip = _price3yRefs[code] != null
       ? `3年前20日平均 ${fmt(_price3yRefs[code])}円` : '再上場等により3年前比較不能';
@@ -2361,7 +2373,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       const val = valuationLevel(p, high52, low52, _rsis[s.code], _rsiSma14s[s.code], _bbUppers[s.code], _bbLowers[s.code]);
       return {
         s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, rangePos,
-        longSlump: isLongSlump(s.code), longChange: _longChanges[s.code],
+        longSlump: isLongSlump(s.code), longWeak: isLongWeak(s.code), longChange: _longChanges[s.code],
       };
     });
 
@@ -2375,10 +2387,11 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       return true;
     });
 
-    // 長期低迷はテクニカル判定に関係なく、常に最下部の専用枠へ送る。
-    const groups = { cheap: [], neutral: [], expensive: [], longSlump: [] };
+    // 長期成長弱め・長期低迷はテクニカル判定に関係なく、末尾の専用枠へ送る。
+    const groups = { cheap: [], neutral: [], expensive: [], longWeak: [], longSlump: [] };
     for (const e of enriched) {
       if (e.longSlump) groups.longSlump.push(e);
+      else if (e.longWeak) groups.longWeak.push(e);
       else groups[e.valCls].push(e);
     }
     // 同スコアなら、投資方針に合わせて52週レンジ位置が低い順
@@ -2391,6 +2404,10 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       (a.longChange ?? Infinity) - (b.longChange ?? Infinity)
       || (a.rangePos ?? Infinity) - (b.rangePos ?? Infinity)
     );
+    groups.longWeak.sort((a, b) =>
+      (a.longChange ?? Infinity) - (b.longChange ?? Infinity)
+      || (a.rangePos ?? Infinity) - (b.rangePos ?? Infinity)
+    );
 
     grid.innerHTML = '';
 
@@ -2398,6 +2415,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       { key: 'cheap',     icon: '🟢', label: '押し目候補', desc: '3指標で過熱サインなし。52週レンジ位置が低い順' },
       { key: 'neutral',   icon: '🟡', label: '反発・注意', desc: '52週レンジ・週足RSI・BBのどれかに軽い過熱サイン' },
       { key: 'expensive', icon: '🔴', label: '過熱気味', desc: '3指標に複数または強い過熱サイン' },
+      { key: 'longWeak',  icon: '🟠', label: '長期成長弱め（別枠）', desc: '10年前比が＋50%以下。上場・再上場から10年未満と長期低迷銘柄は対象外' },
       { key: 'longSlump', icon: '⚫', label: '長期低迷（別枠）', desc: '3年比と長期比がともに−3%未満。フィルター通過時も常に最下部へ分離' },
     ];
 
@@ -2412,7 +2430,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       subgrid.className = 'subgrid';
       grid.appendChild(subgrid);
 
-      list.forEach(({ s, p, longSlump }) => {
+      list.forEach(({ s, p, longSlump, longWeak }) => {
         const badgeMkt = s.market === 'プライム' ? 'badge-prime' : 'badge-standard';
         const rsi = _rsis[s.code], rsiSma14 = _rsiSma14s[s.code];
         const card = document.createElement('div');
@@ -2423,6 +2441,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
             <span class="badge ${badgeMkt}">${s.market}</span>
             ${longSlump
               ? '<span class="vbadge long-slump" title="3年比と長期比がともに−3%未満">⚫ 長期低迷</span>'
+              : longWeak
+              ? '<span class="vbadge long-weak" title="10年前比が＋50%以下">🟠 長期成長弱め</span>'
               : valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code])}
             <span class="name">${escapeHtml(s.name)}</span>
             <button class="star-btn" data-code="${s.code}" title="★解除">★</button>
@@ -2460,8 +2480,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       🟢 押し目候補 <strong style="color:#27ae60">${groups.cheap.length}</strong> /
       🟡 反発・注意 <strong style="color:#7f8c8d">${groups.neutral.length}</strong> /
       🔴 過熱気味 <strong style="color:#c0392b">${groups.expensive.length}</strong> /
+      🟠 長期成長弱め <strong style="color:#e67e22">${groups.longWeak.length}</strong> /
       ⚫ 長期低迷 <strong style="color:#34495e">${groups.longSlump.length}</strong><br>
-      <span style="font-size:0.85em;color:#666">通常枠: 過熱サインが少ない順 → 52週レンジ位置が低い順。長期低迷は常に最下部へ分離</span><br>
+      <span style="font-size:0.85em;color:#666">通常枠: 過熱サインが少ない順 → 52週レンジ位置が低い順。長期成長弱め・長期低迷は末尾の別枠へ分離</span><br>
       <span style="font-size:0.82em;color:#666">
         RSI: <span style="background:#e67e22;color:#fff;padding:1px 4px;border-radius:3px">▲ 上</span> 14SMAより上 /
         <span style="background:#2980b9;color:#fff;padding:1px 4px;border-radius:3px">▼ 下</span> 14SMAより下（判定外）。
