@@ -1882,7 +1882,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     総合利回り ≥ <input type="number" id="f-yield-min" value="3" step="0.5" min="0" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <label style="font-size:0.9em">
-    52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="40" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
+    52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="20" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
 </div>
