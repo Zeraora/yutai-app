@@ -65,25 +65,38 @@ def save_stocks(stocks: list[dict[str, Any]]) -> None:
 STOCKS: list[dict[str, Any]] = load_stocks()
 
 
-def _compute_rsi_weekly(close, period: int = 14) -> float | None:
-    """日足 Close を週足にリサンプルして Wilder RSI を計算。"""
+def _compute_rsi_weekly_values(
+    close, period: int = 14, sma_period: int = 14,
+) -> tuple[float | None, float | None]:
+    """週足Wilder RSI(14)と、そのRSIの14週SMAを返す。"""
     if close is None or len(close) < 5:
-        return None
+        return None, None
     # 各週の最終取引日の終値を週足とする
     weekly = close.resample("W").last().dropna()
     if len(weekly) < period + 1:
-        return None
+        return None, None
     delta = weekly.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    last_loss = float(avg_loss.iloc[-1])
-    last_gain = float(avg_gain.iloc[-1])
-    if last_loss == 0:
-        return 100.0
-    rs = last_gain / last_loss
-    return float(100 - (100 / (1 + rs)))
+    rs = avg_gain / avg_loss.where(avg_loss != 0)
+    rsi_series = 100 - (100 / (1 + rs))
+    rsi_series = rsi_series.where(avg_loss != 0, 100.0).dropna()
+    if len(rsi_series) == 0:
+        return None, None
+    current = float(rsi_series.iloc[-1])
+    rsi_sma = (
+        float(rsi_series.iloc[-sma_period:].mean())
+        if len(rsi_series) >= sma_period else None
+    )
+    return current, rsi_sma
+
+
+def _compute_rsi_weekly(close, period: int = 14) -> float | None:
+    """互換用: 日足 Close から最新の週足Wilder RSIだけを返す。"""
+    current, _sma = _compute_rsi_weekly_values(close, period=period)
+    return current
 
 
 def _compute_bollinger(close, period: int = 20, std_mult: float = 2.0) -> tuple[float | None, float | None]:
@@ -168,11 +181,13 @@ def fetch_prices_and_rsi() -> tuple[
     dict[str, float | None],
     dict[str, float | None],
     dict[str, float | None],
+    dict[str, float | None],
 ]:
-    """価格 / 週足RSI / SMA200 / RSI30到達価格 / 52週高値 / 52週安値 / BB上限 / BB下限 を一括取得。"""
+    """価格 / 週足RSI / RSIの14週SMA / SMA200 / RSI30到達価格 / 52週高安 / BB上下限を一括取得。"""
     symbols = [f"{s['code']}.T" for s in STOCKS]
     prices: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     rsis: dict[str, float | None] = {s["code"]: None for s in STOCKS}
+    rsi_sma14s: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     sma200s: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     rsi30s: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     high52s: dict[str, float | None] = {s["code"]: None for s in STOCKS}
@@ -185,7 +200,7 @@ def fetch_prices_and_rsi() -> tuple[
         close = _remove_extreme_price_outliers(code, close)
         if len(close) == 0: return
         prices[code] = float(close.iloc[-1])
-        rsis[code] = _compute_rsi_weekly(close)
+        rsis[code], rsi_sma14s[code] = _compute_rsi_weekly_values(close)
         sma, r30 = _compute_buy_targets(close)
         sma200s[code] = sma
         rsi30s[code] = r30
@@ -225,7 +240,7 @@ def fetch_prices_and_rsi() -> tuple[
         except Exception as e:
             app.logger.warning(f"individual fetch failed for {code}: {e}")
 
-    return prices, rsis, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers
+    return prices, rsis, rsi_sma14s, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers
 
 
 def _compute_avg_roe(ticker) -> float | None:
@@ -351,7 +366,7 @@ def fetch_dividend_yields() -> dict[str, float | None]:
 
 @app.route("/api/prices")
 def api_prices():
-    prices, rsis, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
+    prices, rsis, rsi_sma14s, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
     metrics = fetch_metrics()
     roes = {code: m["roe"] for code, m in metrics.items()}
     pers = {code: m["per"] for code, m in metrics.items()}
@@ -369,6 +384,7 @@ def api_prices():
         "pers": pers,
         "avg_roes": avg_roes,
         "rsis": rsis,
+        "rsi_sma14s": rsi_sma14s,
         "sma200s": sma200s,
         "rsi30_prices": rsi30s,
         "high52s": high52s,
@@ -1875,6 +1891,11 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   }
   .modal-actions .btn-save { background: #27ae60; color: #fff; }
   .modal-actions .btn-cancel { background: #95a5a6; color: #fff; }
+  #watchlist-view .ic-grid { grid-template-columns: repeat(4, 1fr); }
+  .ic-rsi-sma.above { background: #e67e22; color: #fff; }
+  .ic-rsi-sma.below { background: #2980b9; color: #fff; }
+  .ic-rsi-sma.equal { background: #7f8c8d; color: #fff; }
+  .bb-z { font-size: 0.68em; margin-top: 3px; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -1901,6 +1922,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   <strong>判定方式: 全39銘柄を同じ株価履歴から計算できる3指標</strong><br>
   <span style="font-size:0.85em">
   52週レンジ・週足RSI・ボリンジャーバンドのみ。PER・PBR・ROE・PEG・業績成長・SMA200は判定と表示から除外。利回りは参考表示のみ。<br>
+  RSIは現在値と14SMAを別ブロック表示。オレンジ = RSIが14SMAより上 / 青 = 下（比較自体は判定外）。<br>
+  BBは現在値が「-1σ〜0σ」「0σ〜+1σ」「+1σ〜+2σ」など、どの区間にいるかを表示。<br>
   チップ色: <span style="background:#27ae60;color:#fff;padding:1px 6px;border-radius:3px">✓ 0</span> = ペナルティなし /
   <span style="background:#fadbd8;color:#922b21;padding:1px 6px;border-radius:3px">-1</span> = 軽い減点 /
   <span style="background:#c0392b;color:#fff;padding:1px 6px;border-radius:3px">-2</span> = 重い減点
@@ -1959,7 +1982,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
 <script>
   const STOCKS = {{ stocks_json | safe }};
-  let _prices = {}, _rsis = {};
+  let _prices = {}, _rsis = {}, _rsiSma14s = {};
   let _high52s = {}, _low52s = {};
   let _bbUppers = {}, _bbLowers = {};
   let _divYields = {};
@@ -2002,9 +2025,10 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
   // ===== 全39銘柄で同じ条件になる株価指標 (3指標、減点法) =====
   // 同じ株価履歴から計算した「52週レンジ・週足RSI・BB」の過熱サインだけを減点する。
-  function valuationLevel(price, high52, low52, rsi, bbUpper, bbLower) {
+  function valuationLevel(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower) {
     const items = [];
-    const push = (score, label, value, full) => items.push({ score, label, value, full });
+    const push = (score, label, value, full, extra = {}) =>
+      items.push({ score, label, value, full, ...extra });
     // 1. 52週レンジ位置
     if (high52 != null && low52 != null && high52 > low52 && price != null) {
       const pos = (price - low52) / (high52 - low52);
@@ -2021,19 +2045,41 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     if (rsi == null) push(0, 'RSI週', '—', 'RSI週計算不能');
     else {
       const v = rsi.toFixed(1);
-      if      (rsi >= 70) push(-2, 'RSI週', v, `RSI週 ${v} 買われ過ぎ`);
-      else if (rsi >= 50) push(-1, 'RSI週', v, `RSI週 ${v} 強い`);
-      else                push( 0, 'RSI週', v, `RSI週 ${v} (50未満、ペナルティなし)`);
+      let relation = 'unknown', relationLabel = '比較不能', diff = null;
+      if (rsiSma14 != null) {
+        diff = rsi - rsiSma14;
+        if (diff > 0.05) { relation = 'above'; relationLabel = '▲ 上'; }
+        else if (diff < -0.05) { relation = 'below'; relationLabel = '▼ 下'; }
+        else { relation = 'equal'; relationLabel = '＝ 同水準'; }
+      }
+      const smaDetail = rsiSma14 != null
+        ? ` / RSI 14SMA ${rsiSma14.toFixed(1)}より${relationLabel}` : '';
+      const extra = { rsiSma14, relation, relationLabel, diff };
+      if      (rsi >= 70) push(-2, 'RSI週', v, `RSI週 ${v} 買われ過ぎ${smaDetail}`, extra);
+      else if (rsi >= 50) push(-1, 'RSI週', v, `RSI週 ${v} 強い${smaDetail}`, extra);
+      else                push( 0, 'RSI週', v, `RSI週 ${v} (50未満、ペナルティなし)${smaDetail}`, extra);
     }
-    // 3. ボリンジャーバンド位置: 上限近接以上で減点
+    // 3. ボリンジャーバンド位置: 現在値がどのσ区間にいるかを表示
     if (bbUpper == null || bbLower == null || price == null) {
       push(0, 'BB', '—', 'BB計算不能');
-    } else if (price >= bbUpper) {
-      push(-2, 'BB', '上限超', `BB上限超え ${Math.round(price)}≥${Math.round(bbUpper)}`);
-    } else if (price >= bbUpper * 0.98) {
-      push(-1, 'BB', '上限近', `BB上限近 ${Math.round(price)}`);
     } else {
-      push( 0, 'BB', '安全', 'BB上限から離れている (ペナルティなし)');
+      const middle = (bbUpper + bbLower) / 2;
+      const sigma = (bbUpper - bbLower) / 4;
+      if (sigma <= 0) {
+        push(0, 'BB', '—', 'BB標準偏差を計算不能');
+      } else {
+        const z = (price - middle) / sigma;
+        let band;
+        if      (z >=  2) band = '+2σ以上';
+        else if (z >=  1) band = '+1σ〜+2σ';
+        else if (z >=  0) band = '0σ〜+1σ';
+        else if (z >= -1) band = '-1σ〜0σ';
+        else if (z >= -2) band = '-2σ〜-1σ';
+        else               band = '-2σ以下';
+        const score = z >= 2 ? -2 : z >= 1 ? -1 : 0;
+        const signedZ = `${z >= 0 ? '+' : ''}${z.toFixed(2)}σ`;
+        push(score, 'BB', band, `BB位置 ${band} (現在 ${signedZ})`, { bbZ: z, signedZ });
+      }
     }
     const score = items.reduce((s, it) => s + it.score, 0);
     let label, cls;
@@ -2042,8 +2088,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     else                   { label = '🔴 過熱気味'; cls = 'expensive'; }
     return { label, cls, score, items };
   }
-  function valuationBadge(price, high52, low52, rsi, bbUpper, bbLower) {
-    const r = valuationLevel(price, high52, low52, rsi, bbUpper, bbLower);
+  function valuationBadge(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower) {
+    const r = valuationLevel(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower);
     const tip = r.items.map(it => `${it.full} (${it.score})`).join('\n') + `\n= 合計 ${r.score}`;
     return `<span class="vbadge ${r.cls}" title="${escapeHtml(tip)}">${r.label} <small>${r.score}</small></span>`;
   }
@@ -2079,11 +2125,22 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       else if (it.score === -1) cls = 'ic-bad';            // 軽い減点 = 薄赤
       else                      cls = 'ic-bad-strong';     // 重い減点 = 濃赤
       const display = it.score === 0 ? '✓' : `${it.score}`;
-      return `<div class="ic ${cls}" title="${escapeHtml(it.full)}">
+      const bbZHtml = it.label === 'BB' && it.signedZ
+        ? `<div class="bb-z">現在 ${it.signedZ}</div>` : '';
+      const mainBlock = `<div class="ic ${cls}" title="${escapeHtml(it.full)}">
         <div class="ic-name">${it.label}</div>
         <div class="ic-val">${it.value}</div>
+        ${bbZHtml}
         <div class="ic-pts">${display}</div>
       </div>`;
+      if (it.label !== 'RSI週' || it.rsiSma14 == null) return mainBlock;
+      const smaTip = `RSI ${it.value} / 14SMA ${it.rsiSma14.toFixed(1)} → RSIは${it.relationLabel}`;
+      const smaBlock = `<div class="ic ic-rsi-sma ${it.relation}" title="${escapeHtml(smaTip)}">
+        <div class="ic-name">RSI 14SMA</div>
+        <div class="ic-val">${it.rsiSma14.toFixed(1)}</div>
+        <div class="ic-pts">RSI ${it.relationLabel}</div>
+      </div>`;
+      return mainBlock + smaBlock;
     }).join('');
   }
 
@@ -2099,7 +2156,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       const high52 = _high52s[s.code], low52 = _low52s[s.code];
       const rangePos = (high52 != null && low52 != null && high52 > low52 && p != null)
         ? (p - low52) / (high52 - low52) * 100 : null;
-      const val = valuationLevel(p, high52, low52, _rsis[s.code], _bbUppers[s.code], _bbLowers[s.code]);
+      const val = valuationLevel(p, high52, low52, _rsis[s.code], _rsiSma14s[s.code], _bbUppers[s.code], _bbLowers[s.code]);
       return { s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, rangePos };
     });
 
@@ -2144,14 +2201,14 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
       list.forEach(({ s, p }) => {
         const badgeMkt = s.market === 'プライム' ? 'badge-prime' : 'badge-standard';
-        const rsi = _rsis[s.code];
+        const rsi = _rsis[s.code], rsiSma14 = _rsiSma14s[s.code];
         const card = document.createElement('div');
         card.className = 'card';
         card.innerHTML = `
           <div class="card-head">
             <span class="code">${s.code}</span>
             <span class="badge ${badgeMkt}">${s.market}</span>
-            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, _bbUppers[s.code], _bbLowers[s.code])}
+            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code])}
             <span class="name">${escapeHtml(s.name)}</span>
             <button class="star-btn" data-code="${s.code}" title="★解除">★</button>
           </div>
@@ -2169,7 +2226,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
                 ${upLow != null ? `<span style="font-size:0.78em;color:#888">/ 安値 ${fmt(l)}円 +${upLow.toFixed(1)}%</span>` : ''}`;
             })()}
           </div>
-          <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
+          <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
           ${yieldBlockHtml(s, p, _divYields[s.code])}
           <div class="actions">
             <a href="https://finance.yahoo.co.jp/quote/${s.code}.T" target="_blank" rel="noopener">Y!</a>
@@ -2187,7 +2244,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       🟢 押し目候補 <strong style="color:#27ae60">${groups.cheap.length}</strong> /
       🟡 反発・注意 <strong style="color:#7f8c8d">${groups.neutral.length}</strong> /
       🔴 過熱気味 <strong style="color:#c0392b">${groups.expensive.length}</strong><br>
-      <span style="font-size:0.85em;color:#666">並び順: 過熱サインが少ない順 → 52週レンジ位置が低い順。利回りは参考表示のみ</span>`;
+      <span style="font-size:0.85em;color:#666">並び順: 過熱サインが少ない順 → 52週レンジ位置が低い順。利回りは参考表示のみ</span><br>
+      <span style="font-size:0.82em;color:#666">
+        RSI: <span style="background:#e67e22;color:#fff;padding:1px 4px;border-radius:3px">▲ 上</span> 14SMAより上 /
+        <span style="background:#2980b9;color:#fff;padding:1px 4px;border-radius:3px">▼ 下</span> 14SMAより下（判定外）。
+        BB: 現在値のσ区間と正確な位置を表示（+1σ以上は過熱減点）
+      </span>`;
   }
 
   async function refreshPrices() {
@@ -2200,6 +2262,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       const data = await res.json();
       _prices = data.prices || {};
       _rsis = data.rsis || {};
+      _rsiSma14s = data.rsi_sma14s || {};
       _high52s = data.high52s || {};
       _low52s = data.low52s || {};
       _bbUppers = data.bb_uppers || {};

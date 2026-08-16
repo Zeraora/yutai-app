@@ -75,14 +75,27 @@ def main() -> None:
 
     # データ取得
     print("yfinance データ取得中… (1〜3分)")
-    prices, rsis, _sma200s, _rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
+    prices, rsis, rsi_sma14s, _sma200s, _rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
     div_yields = fetch_dividend_yields()
     ok_p = sum(1 for v in prices.values() if v)
     print(f"  株価取得: {ok_p}/{len(starred)} 件成功")
+    common_metrics = (prices, rsis, rsi_sma14s, high52s, low52s, bb_uppers, bb_lowers)
+    missing_common = [
+        s["code"] for s in starred
+        if any(metric.get(s["code"]) is None for metric in common_metrics)
+    ]
+    ok_common = len(starred) - len(missing_common)
+    print(f"  共通3指標+RSI 14SMA: {ok_common}/{len(starred)} 件成功")
+    if missing_common:
+        raise RuntimeError(
+            "共通指標が揃わないため公開HTMLを更新しません: "
+            + ", ".join(missing_common)
+        )
 
     embedded = {
         "prices": prices,
         "rsis": rsis,
+        "rsi_sma14s": rsi_sma14s,
         "high52s": high52s,
         "low52s": low52s,
         "bb_uppers": bb_uppers,
