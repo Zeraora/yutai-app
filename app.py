@@ -25,6 +25,8 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 
 app = Flask(__name__)
 JST = ZoneInfo("Asia/Tokyo")
+# 上場廃止を挟んだ銘柄は、旧上場時代と連続比較せず再上場日から扱う。
+RELISTED_DATES = {"8303": "2025-12-17"}
 
 # === Basic 認証 (環境変数で有効化) ===
 # BASIC_AUTH_USER と BASIC_AUTH_PASS が両方設定されているときのみ認証を要求。
@@ -122,7 +124,7 @@ def _remove_extreme_price_outliers(code: str, close):
     if not math.isfinite(median) or median <= 0:
         return clean
 
-    # auto_adjust後の1年データで20倍超の乖離はデータ異常とみなす。
+    # 取得期間内の中央値から20倍超の乖離はデータ異常とみなす。
     filtered = clean[(clean >= median / 20) & (clean <= median * 20)]
     removed = len(clean) - len(filtered)
     # 正常データを誤って大きく削らないよう、80%以上残る場合だけ採用する。
@@ -132,6 +134,99 @@ def _remove_extreme_price_outliers(code: str, close):
         )
         return filtered
     return clean
+
+
+def _compute_three_year_comparison(close) -> tuple[float | None, float | None]:
+    """現在値と3年前時点までの20営業日平均から (基準株価, 騰落率%) を返す。"""
+    if close is None or len(close) < 20:
+        return None, None
+    clean = close.dropna().sort_index()
+    if len(clean) < 20:
+        return None, None
+    latest_date = clean.index[-1]
+    try:
+        target_date = latest_date.replace(year=latest_date.year - 3)
+    except ValueError:  # うるう日の場合は2月28日を使う
+        target_date = latest_date.replace(year=latest_date.year - 3, day=28)
+    baseline_window = clean.loc[:target_date].tail(20)
+    if len(baseline_window) < 20:
+        return None, None
+    # 基準期間内に明らかな単発異常値があれば除外して平均を守る。
+    window_median = float(baseline_window.median())
+    if not math.isfinite(window_median) or window_median <= 0:
+        return None, None
+    baseline_window = baseline_window[
+        (baseline_window >= window_median / 5)
+        & (baseline_window <= window_median * 5)
+    ]
+    if len(baseline_window) < 15:
+        return None, None
+    baseline = float(baseline_window.mean())
+    current = float(clean.iloc[-1])
+    if not math.isfinite(baseline) or not math.isfinite(current) or baseline <= 0:
+        return None, None
+    change_pct = (current / baseline - 1) * 100
+    return baseline, change_pct
+
+
+def _compute_long_term_comparison(
+    code: str, close,
+) -> tuple[float | None, float | None, str | None, float | None]:
+    """10年前比。履歴10年未満は上場来、再上場銘柄は再上場来で比較する。"""
+    if close is None or len(close) < 20:
+        return None, None, None, None
+    clean = close.dropna().sort_index()
+    if len(clean) < 20:
+        return None, None, None, None
+
+    latest_date = clean.index[-1]
+    relisted_date = RELISTED_DATES.get(code)
+    if relisted_date:
+        # Yahooに混入する再上場直後の巨大異常値を、再上場後全体の中央値で除く。
+        segment = clean.loc[relisted_date:]
+        if len(segment) < 20:
+            return None, None, None, None
+        segment_median = float(segment.median())
+        if not math.isfinite(segment_median) or segment_median <= 0:
+            return None, None, None, None
+        segment = segment[
+            (segment >= segment_median / 5)
+            & (segment <= segment_median * 5)
+        ]
+        if len(segment) < 20:
+            return None, None, None, None
+        baseline_window = segment.head(20)
+        label = "再上場来"
+        years = (segment.index[-1] - segment.index[0]).days / 365.25
+    else:
+        try:
+            target_date = latest_date.replace(year=latest_date.year - 10)
+        except ValueError:
+            target_date = latest_date.replace(year=latest_date.year - 10, day=28)
+        baseline_window = clean.loc[:target_date].tail(20)
+        if len(baseline_window) == 20:
+            label = "10年前比"
+            years = 10.0
+        else:
+            baseline_window = clean.head(20)
+            label = "上場来"
+            years = (latest_date - clean.index[0]).days / 365.25
+
+    window_median = float(baseline_window.median())
+    if not math.isfinite(window_median) or window_median <= 0:
+        return None, None, None, None
+    baseline_window = baseline_window[
+        (baseline_window >= window_median / 5)
+        & (baseline_window <= window_median * 5)
+    ]
+    if len(baseline_window) < 15:
+        return None, None, None, None
+    baseline = float(baseline_window.mean())
+    current = float(clean.iloc[-1])
+    if not math.isfinite(baseline) or not math.isfinite(current) or baseline <= 0:
+        return None, None, None, None
+    change_pct = (current / baseline - 1) * 100
+    return baseline, change_pct, label, years
 
 
 def _compute_buy_targets(close) -> tuple[float | None, float | None]:
@@ -182,8 +277,14 @@ def fetch_prices_and_rsi() -> tuple[
     dict[str, float | None],
     dict[str, float | None],
     dict[str, float | None],
+    dict[str, float | None],
+    dict[str, float | None],
+    dict[str, float | None],
+    dict[str, float | None],
+    dict[str, str | None],
+    dict[str, float | None],
 ]:
-    """価格 / 週足RSI / RSIの14週SMA / SMA200 / RSI30到達価格 / 52週高安 / BB上下限を一括取得。"""
+    """価格 / RSI / 52週高安 / BB / 3年前比較などを一括取得。"""
     symbols = [f"{s['code']}.T" for s in STOCKS]
     prices: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     rsis: dict[str, float | None] = {s["code"]: None for s in STOCKS}
@@ -194,10 +295,18 @@ def fetch_prices_and_rsi() -> tuple[
     low52s: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     bb_uppers: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     bb_lowers: dict[str, float | None] = {s["code"]: None for s in STOCKS}
+    price3y_refs: dict[str, float | None] = {s["code"]: None for s in STOCKS}
+    price3y_changes: dict[str, float | None] = {s["code"]: None for s in STOCKS}
+    long_refs: dict[str, float | None] = {s["code"]: None for s in STOCKS}
+    long_changes: dict[str, float | None] = {s["code"]: None for s in STOCKS}
+    long_labels: dict[str, str | None] = {s["code"]: None for s in STOCKS}
+    long_years: dict[str, float | None] = {s["code"]: None for s in STOCKS}
 
-    def _populate(code: str, close):
+    def _populate(code: str, close, price_only_close=None):
         if close is None or len(close) == 0: return
-        close = _remove_extreme_price_outliers(code, close)
+        # 既存3指標は従来どおり直近約1年だけで計算する。
+        # 長期履歴全体を混ぜると、古い異常値やRSI初期値が結果を変えるため。
+        close = _remove_extreme_price_outliers(code, close.tail(260))
         if len(close) == 0: return
         prices[code] = float(close.iloc[-1])
         rsis[code], rsi_sma14s[code] = _compute_rsi_weekly_values(close)
@@ -211,11 +320,23 @@ def fetch_prices_and_rsi() -> tuple[
         if n > 0:
             high52s[code] = float(close.iloc[-n:].max())
             low52s[code] = float(close.iloc[-n:].min())
+        comparison_close = price_only_close if price_only_close is not None else close
+        if code not in RELISTED_DATES:
+            price3y_refs[code], price3y_changes[code] = _compute_three_year_comparison(comparison_close)
+        (
+            long_refs[code], long_changes[code],
+            long_labels[code], long_years[code],
+        ) = _compute_long_term_comparison(code, comparison_close)
 
+    today = datetime.now(JST).date()
+    try:
+        history_start = today.replace(year=today.year - 11).isoformat()
+    except ValueError:
+        history_start = today.replace(year=today.year - 11, day=28).isoformat()
     try:
         data = yf.download(
-            symbols, period="1y", progress=False,
-            group_by="ticker", auto_adjust=True, threads=True,
+            symbols, start=history_start, progress=False,
+            group_by="ticker", auto_adjust=False, threads=True,
         )
     except Exception as e:
         app.logger.warning(f"bulk download failed: {e}")
@@ -225,8 +346,9 @@ def fetch_prices_and_rsi() -> tuple[
         for s in STOCKS:
             sym = f"{s['code']}.T"
             try:
-                close = data[sym]["Close"].dropna()
-                _populate(s["code"], close)
+                price_only_close = data[sym]["Close"].dropna()
+                adjusted_close = data[sym]["Adj Close"].dropna()
+                _populate(s["code"], adjusted_close, price_only_close)
             except (KeyError, ValueError, AttributeError):
                 pass
 
@@ -234,13 +356,18 @@ def fetch_prices_and_rsi() -> tuple[
     for code in missing:
         try:
             t = yf.Ticker(f"{code}.T")
-            hist = t.history(period="1y")
+            hist = t.history(start=history_start, auto_adjust=False)
             if not hist.empty:
-                _populate(code, hist["Close"])
+                _populate(code, hist["Adj Close"], hist["Close"])
         except Exception as e:
             app.logger.warning(f"individual fetch failed for {code}: {e}")
 
-    return prices, rsis, rsi_sma14s, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers
+    return (
+        prices, rsis, rsi_sma14s, sma200s, rsi30s,
+        high52s, low52s, bb_uppers, bb_lowers,
+        price3y_refs, price3y_changes,
+        long_refs, long_changes, long_labels, long_years,
+    )
 
 
 def _compute_avg_roe(ticker) -> float | None:
@@ -366,7 +493,12 @@ def fetch_dividend_yields() -> dict[str, float | None]:
 
 @app.route("/api/prices")
 def api_prices():
-    prices, rsis, rsi_sma14s, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
+    (
+        prices, rsis, rsi_sma14s, sma200s, rsi30s,
+        high52s, low52s, bb_uppers, bb_lowers,
+        price3y_refs, price3y_changes,
+        long_refs, long_changes, long_labels, long_years,
+    ) = fetch_prices_and_rsi()
     metrics = fetch_metrics()
     roes = {code: m["roe"] for code, m in metrics.items()}
     pers = {code: m["per"] for code, m in metrics.items()}
@@ -391,6 +523,12 @@ def api_prices():
         "low52s": low52s,
         "bb_uppers": bb_uppers,
         "bb_lowers": bb_lowers,
+        "price3y_refs": price3y_refs,
+        "price3y_changes": price3y_changes,
+        "long_refs": long_refs,
+        "long_changes": long_changes,
+        "long_labels": long_labels,
+        "long_years": long_years,
         "pbrs": pbrs,
         "div_yields": div_yields,
         "pegs": pegs,
@@ -724,6 +862,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .vbadge.cheap { background: #27ae60; }
   .vbadge.neutral { background: #95a5a6; }
   .vbadge.expensive { background: #c0392b; }
+  .vbadge.long-slump { background: #34495e; }
   .premium { font-size: 1.15em; vertical-align: middle; cursor: help; }
   .yield-block {
     background: #f5f7fa; padding: 0.5em 0.7em; border-radius: 4px;
@@ -1896,6 +2035,22 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .ic-rsi-sma.below { background: #2980b9; color: #fff; }
   .ic-rsi-sma.equal { background: #7f8c8d; color: #fff; }
   .bb-z { font-size: 0.68em; margin-top: 3px; opacity: 0.85; }
+  .comparison-block {
+    display: flex; align-items: center; gap: 0.55em; flex-wrap: wrap;
+    padding: 0.45em 0.65em; border-radius: 4px;
+    border-left: 3px solid #7f8c8d; background: #f4f6f7;
+    font-size: 0.84em; line-height: 1.35;
+  }
+  .comparison-block .comparison-metric { white-space: nowrap; }
+  .comparison-block .comparison-name { color: #666; font-weight: bold; }
+  .comparison-block .comparison-change { font-family: "SF Mono", Menlo, monospace; font-weight: bold; }
+  .comparison-block .comparison-change.below { color: #2980b9; }
+  .comparison-block .comparison-change.above { color: #d35400; }
+  .comparison-block .comparison-change.flat { color: #7f8c8d; }
+  .comparison-block .comparison-sep { color: #aaa; }
+  .comparison-block .trend-tag { margin-left: auto; font-weight: bold; white-space: nowrap; }
+  .comparison-block.long-slump { background: #eaecee; border-left-color: #34495e; color: #2c3e50; }
+  .comparison-block.recovery-watch { background: #f4ecf7; border-left-color: #8e44ad; color: #6c3483; }
 </style>
 </head>
 <body>
@@ -1921,7 +2076,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 <div class="summary" id="summary">
   <strong>判定方式: 全39銘柄を同じ株価履歴から計算できる3指標</strong><br>
   <span style="font-size:0.85em">
-  52週レンジ・週足RSI・ボリンジャーバンドのみ。PER・PBR・ROE・PEG・業績成長・SMA200は判定と表示から除外。利回りは参考表示のみ。<br>
+  52週レンジ・週足RSI・ボリンジャーバンドのみ。3年前比・長期比・利回りは参考表示。ただし3年比と長期比が両方−3%未満の銘柄は最下部の長期低迷枠へ分離。<br>
   RSIは現在値と14SMAを別ブロック表示。オレンジ = RSIが14SMAより上 / 青 = 下（比較自体は判定外）。<br>
   BBは現在値が「-1σ〜0σ」「0σ〜+1σ」「+1σ〜+2σ」など、どの区間にいるかを表示。<br>
   チップ色: <span style="background:#27ae60;color:#fff;padding:1px 6px;border-radius:3px">✓ 0</span> = ペナルティなし /
@@ -1985,6 +2140,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   let _prices = {}, _rsis = {}, _rsiSma14s = {};
   let _high52s = {}, _low52s = {};
   let _bbUppers = {}, _bbLowers = {};
+  let _price3yRefs = {}, _price3yChanges = {};
+  let _longRefs = {}, _longChanges = {}, _longLabels = {}, _longYears = {};
   let _divYields = {};
 
   function escapeHtml(s) {
@@ -2093,6 +2250,50 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const tip = r.items.map(it => `${it.full} (${it.score})`).join('\n') + `\n= 合計 ${r.score}`;
     return `<span class="vbadge ${r.cls}" title="${escapeHtml(tip)}">${r.label} <small>${r.score}</small></span>`;
   }
+  function isLongSlump(code) {
+    const change3y = _price3yChanges[code];
+    const longChange = _longChanges[code];
+    return change3y != null && longChange != null && change3y < -3 && longChange < -3;
+  }
+  function comparisonChangeHtml(changePct) {
+    if (changePct == null) return '<span class="comparison-change flat">—</span>';
+    let cls, arrow;
+    if (changePct < -3) { cls = 'below'; arrow = '▼'; }
+    else if (changePct > 3) { cls = 'above'; arrow = '▲'; }
+    else { cls = 'flat'; arrow = '≒'; }
+    const signed = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%`;
+    return `<span class="comparison-change ${cls}">${arrow} ${signed}</span>`;
+  }
+  function comparisonPeriodLabel(label, years) {
+    if (!label) return '長期比';
+    if (label === '10年前比' || years == null) return label;
+    const months = Math.max(0, Math.round(years * 12));
+    const yearPart = Math.floor(months / 12);
+    const monthPart = months % 12;
+    const duration = `${yearPart > 0 ? `${yearPart}年` : ''}${monthPart > 0 ? `${monthPart}か月` : ''}` || '1か月未満';
+    return `${label}（${duration}）`;
+  }
+  // 3年前比と長期比を併記。長期低迷の判定だけ別セクション振り分けに使う。
+  function comparisonBlockHtml(code) {
+    const change3y = _price3yChanges[code];
+    const longChange = _longChanges[code];
+    const longLabel = comparisonPeriodLabel(_longLabels[code], _longYears[code]);
+    const slump = isLongSlump(code);
+    const recoveryWatch = change3y != null && change3y < -3 && longChange != null && longChange >= -3;
+    const blockCls = slump ? 'long-slump' : recoveryWatch ? 'recovery-watch' : '';
+    const tag = slump ? '<span class="trend-tag">⚫ 長期低迷</span>'
+      : recoveryWatch ? '<span class="trend-tag">🟣 長期成長の調整</span>' : '';
+    const threeTip = _price3yRefs[code] != null
+      ? `3年前20日平均 ${fmt(_price3yRefs[code])}円` : '再上場等により3年前比較不能';
+    const longTip = _longRefs[code] != null
+      ? `${longLabel}の基準20日平均 ${fmt(_longRefs[code])}円` : '長期比較不能';
+    return `<div class="comparison-block ${blockCls}" title="${escapeHtml(`${threeTip} / ${longTip}`)}">
+      <span class="comparison-metric"><span class="comparison-name">3年比</span> ${comparisonChangeHtml(change3y)}</span>
+      <span class="comparison-sep">|</span>
+      <span class="comparison-metric"><span class="comparison-name">${longLabel}</span> ${comparisonChangeHtml(longChange)}</span>
+      ${tag}
+    </div>`;
+  }
   // 利回りは参考表示のみ。判定・フィルタ・並び順には使用しない。
   function yieldBlockHtml(s, price, divYield) {
     const hasBenefit = s.yutai_shares != null && s.yutai_shares > 0
@@ -2157,7 +2358,10 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       const rangePos = (high52 != null && low52 != null && high52 > low52 && p != null)
         ? (p - low52) / (high52 - low52) * 100 : null;
       const val = valuationLevel(p, high52, low52, _rsis[s.code], _rsiSma14s[s.code], _bbUppers[s.code], _bbLowers[s.code]);
-      return { s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, rangePos };
+      return {
+        s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, rangePos,
+        longSlump: isLongSlump(s.code), longChange: _longChanges[s.code],
+      };
     });
 
     // 52週レンジ位置フィルタを適用
@@ -2170,15 +2374,22 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       return true;
     });
 
-    // 過熱サインの少なさでグルーピング
-    const groups = { cheap: [], neutral: [], expensive: [] };
-    for (const e of enriched) groups[e.valCls].push(e);
+    // 長期低迷はテクニカル判定に関係なく、常に最下部の専用枠へ送る。
+    const groups = { cheap: [], neutral: [], expensive: [], longSlump: [] };
+    for (const e of enriched) {
+      if (e.longSlump) groups.longSlump.push(e);
+      else groups[e.valCls].push(e);
+    }
     // 同スコアなら、投資方針に合わせて52週レンジ位置が低い順
     for (const k of Object.keys(groups)) {
       groups[k].sort((a, b) =>
         b.valScore - a.valScore || (a.rangePos ?? Infinity) - (b.rangePos ?? Infinity)
       );
     }
+    groups.longSlump.sort((a, b) =>
+      (a.longChange ?? Infinity) - (b.longChange ?? Infinity)
+      || (a.rangePos ?? Infinity) - (b.rangePos ?? Infinity)
+    );
 
     grid.innerHTML = '';
 
@@ -2186,6 +2397,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       { key: 'cheap',     icon: '🟢', label: '押し目候補', desc: '3指標で過熱サインなし。52週レンジ位置が低い順' },
       { key: 'neutral',   icon: '🟡', label: '反発・注意', desc: '52週レンジ・週足RSI・BBのどれかに軽い過熱サイン' },
       { key: 'expensive', icon: '🔴', label: '過熱気味', desc: '3指標に複数または強い過熱サイン' },
+      { key: 'longSlump', icon: '⚫', label: '長期低迷（別枠）', desc: '3年比と長期比がともに−3%未満。フィルター通過時も常に最下部へ分離' },
     ];
 
     sectionMeta.forEach(meta => {
@@ -2199,7 +2411,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       subgrid.className = 'subgrid';
       grid.appendChild(subgrid);
 
-      list.forEach(({ s, p }) => {
+      list.forEach(({ s, p, longSlump }) => {
         const badgeMkt = s.market === 'プライム' ? 'badge-prime' : 'badge-standard';
         const rsi = _rsis[s.code], rsiSma14 = _rsiSma14s[s.code];
         const card = document.createElement('div');
@@ -2208,7 +2420,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
           <div class="card-head">
             <span class="code">${s.code}</span>
             <span class="badge ${badgeMkt}">${s.market}</span>
-            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code])}
+            ${longSlump
+              ? '<span class="vbadge long-slump" title="3年比と長期比がともに−3%未満">⚫ 長期低迷</span>'
+              : valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code])}
             <span class="name">${escapeHtml(s.name)}</span>
             <button class="star-btn" data-code="${s.code}" title="★解除">★</button>
           </div>
@@ -2227,6 +2441,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
             })()}
           </div>
           <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
+          ${comparisonBlockHtml(s.code)}
           ${yieldBlockHtml(s, p, _divYields[s.code])}
           <div class="actions">
             <a href="https://finance.yahoo.co.jp/quote/${s.code}.T" target="_blank" rel="noopener">Y!</a>
@@ -2243,8 +2458,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       `<strong>${enriched.length} / ${STOCKS.length} 銘柄表示中</strong>${filterNote}:
       🟢 押し目候補 <strong style="color:#27ae60">${groups.cheap.length}</strong> /
       🟡 反発・注意 <strong style="color:#7f8c8d">${groups.neutral.length}</strong> /
-      🔴 過熱気味 <strong style="color:#c0392b">${groups.expensive.length}</strong><br>
-      <span style="font-size:0.85em;color:#666">並び順: 過熱サインが少ない順 → 52週レンジ位置が低い順。利回りは参考表示のみ</span><br>
+      🔴 過熱気味 <strong style="color:#c0392b">${groups.expensive.length}</strong> /
+      ⚫ 長期低迷 <strong style="color:#34495e">${groups.longSlump.length}</strong><br>
+      <span style="font-size:0.85em;color:#666">通常枠: 過熱サインが少ない順 → 52週レンジ位置が低い順。長期低迷は常に最下部へ分離</span><br>
       <span style="font-size:0.82em;color:#666">
         RSI: <span style="background:#e67e22;color:#fff;padding:1px 4px;border-radius:3px">▲ 上</span> 14SMAより上 /
         <span style="background:#2980b9;color:#fff;padding:1px 4px;border-radius:3px">▼ 下</span> 14SMAより下（判定外）。
@@ -2267,6 +2483,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       _low52s = data.low52s || {};
       _bbUppers = data.bb_uppers || {};
       _bbLowers = data.bb_lowers || {};
+      _price3yRefs = data.price3y_refs || {};
+      _price3yChanges = data.price3y_changes || {};
+      _longRefs = data.long_refs || {};
+      _longChanges = data.long_changes || {};
+      _longLabels = data.long_labels || {};
+      _longYears = data.long_years || {};
       _divYields = data.div_yields || {};
       render();
       status.textContent = `最終更新: ${data.fetched_at}`;

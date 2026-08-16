@@ -75,17 +75,31 @@ def main() -> None:
 
     # データ取得
     print("yfinance データ取得中… (1〜3分)")
-    prices, rsis, rsi_sma14s, _sma200s, _rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
+    (
+        prices, rsis, rsi_sma14s, _sma200s, _rsi30s,
+        high52s, low52s, bb_uppers, bb_lowers,
+        price3y_refs, price3y_changes,
+        long_refs, long_changes, long_labels, long_years,
+    ) = fetch_prices_and_rsi()
     div_yields = fetch_dividend_yields()
     ok_p = sum(1 for v in prices.values() if v)
     print(f"  株価取得: {ok_p}/{len(starred)} 件成功")
-    common_metrics = (prices, rsis, rsi_sma14s, high52s, low52s, bb_uppers, bb_lowers)
+    common_metrics = (
+        prices, rsis, rsi_sma14s, high52s, low52s,
+        bb_uppers, bb_lowers, long_refs, long_changes, long_labels, long_years,
+    )
     missing_common = [
         s["code"] for s in starred
         if any(metric.get(s["code"]) is None for metric in common_metrics)
     ]
+    missing_3y = [
+        s["code"] for s in starred
+        if s["code"] not in app.RELISTED_DATES
+        and (price3y_refs.get(s["code"]) is None or price3y_changes.get(s["code"]) is None)
+    ]
+    missing_common = sorted(set(missing_common + missing_3y))
     ok_common = len(starred) - len(missing_common)
-    print(f"  共通3指標+RSI 14SMA: {ok_common}/{len(starred)} 件成功")
+    print(f"  共通3指標+3年前比+長期比: {ok_common}/{len(starred)} 件成功")
     if missing_common:
         raise RuntimeError(
             "共通指標が揃わないため公開HTMLを更新しません: "
@@ -100,6 +114,12 @@ def main() -> None:
         "low52s": low52s,
         "bb_uppers": bb_uppers,
         "bb_lowers": bb_lowers,
+        "price3y_refs": price3y_refs,
+        "price3y_changes": price3y_changes,
+        "long_refs": long_refs,
+        "long_changes": long_changes,
+        "long_labels": long_labels,
+        "long_years": long_years,
         "div_yields": div_yields,
         "fetched_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
     }
