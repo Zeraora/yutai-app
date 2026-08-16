@@ -15,6 +15,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -25,6 +26,8 @@ from app import (
     fetch_metrics,
     WATCHLIST_HTML,
 )
+
+JST = ZoneInfo("Asia/Tokyo")
 
 
 # 静的化用の上書きスクリプト+CSS
@@ -96,7 +99,7 @@ def main() -> None:
         "bb_uppers": bb_uppers,
         "bb_lowers": bb_lowers,
         "verified": {s["code"]: s.get("last_verified") for s in starred},
-        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
     }
 
     # WATCHLIST_HTML の Jinja プレースホルダ置換

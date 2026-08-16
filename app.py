@@ -18,11 +18,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 from flask import Flask, Response, jsonify, redirect, render_template_string, request
 
 app = Flask(__name__)
+JST = ZoneInfo("Asia/Tokyo")
 
 # === Basic 認証 (環境変数で有効化) ===
 # BASIC_AUTH_USER と BASIC_AUTH_PASS が両方設定されているときのみ認証を要求。
@@ -339,13 +341,13 @@ def api_prices():
         "payout_ratios": payout_ratios,
         "equity_ratios": equity_ratios,
         "verified": verified,
-        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
     })
 
 
 @app.route("/api/verify/<code>", methods=["POST"])
 def api_verify(code: str):
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(JST).strftime("%Y-%m-%d")
     with _stocks_lock:
         found = False
         for s in STOCKS:
