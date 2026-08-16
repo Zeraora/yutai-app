@@ -1833,7 +1833,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 
-<h1>★ 押し目買いウォッチリスト <a href="/">← 全銘柄一覧へ</a></h1>
+<h1>★ 押し目買いウォッチリスト</h1>
 
 <div class="topbar">
   <button id="refresh">価格を更新</button>
