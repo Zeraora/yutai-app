@@ -1876,10 +1876,10 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   <span id="status">起動時に自動取得します…</span>
   <span style="margin-left:auto"></span>
   <label style="font-size:0.9em">
-    優待取得必要額 ≤ <input type="number" id="f-cost-max" value="50" step="10" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> 万円
+    優待取得必要額 ≤ <input type="number" id="f-cost-max" value="" placeholder="指定なし" step="10" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> 万円
   </label>
   <label style="font-size:0.9em">
-    総合利回り ≥ <input type="number" id="f-yield-min" value="3" step="0.5" min="0" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
+    総合利回り ≥ <input type="number" id="f-yield-min" value="" placeholder="指定なし" step="0.5" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <label style="font-size:0.9em">
     52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="20" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
