@@ -98,6 +98,29 @@ def _compute_bollinger(close, period: int = 20, std_mult: float = 2.0) -> tuple[
     return sma + std_mult * std, sma - std_mult * std
 
 
+def _remove_extreme_price_outliers(code: str, close):
+    """中央値から極端に離れた単発の価格異常値を除外する。"""
+    if close is None or len(close) == 0:
+        return close
+    clean = close.dropna()
+    if len(clean) < 5:
+        return clean
+    median = float(clean.median())
+    if not math.isfinite(median) or median <= 0:
+        return clean
+
+    # auto_adjust後の1年データで20倍超の乖離はデータ異常とみなす。
+    filtered = clean[(clean >= median / 20) & (clean <= median * 20)]
+    removed = len(clean) - len(filtered)
+    # 正常データを誤って大きく削らないよう、80%以上残る場合だけ採用する。
+    if removed > 0 and len(filtered) >= max(5, math.ceil(len(clean) * 0.8)):
+        app.logger.warning(
+            "removed %d extreme price outlier(s) for %s", removed, code,
+        )
+        return filtered
+    return clean
+
+
 def _compute_buy_targets(close) -> tuple[float | None, float | None]:
     """
     日足 Close から (200日SMA, RSI30到達価格) を返す。
@@ -159,6 +182,8 @@ def fetch_prices_and_rsi() -> tuple[
 
     def _populate(code: str, close):
         if close is None or len(close) == 0: return
+        close = _remove_extreme_price_outliers(code, close)
+        if len(close) == 0: return
         prices[code] = float(close.iloc[-1])
         rsis[code] = _compute_rsi_weekly(close)
         sma, r30 = _compute_buy_targets(close)
