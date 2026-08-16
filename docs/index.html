@@ -201,6 +201,11 @@
   }
   .modal-actions .btn-save { background: #27ae60; color: #fff; }
   .modal-actions .btn-cancel { background: #95a5a6; color: #fff; }
+  #watchlist-view .ic-grid { grid-template-columns: repeat(4, 1fr); }
+  .ic-rsi-sma.above { background: #e67e22; color: #fff; }
+  .ic-rsi-sma.below { background: #2980b9; color: #fff; }
+  .ic-rsi-sma.equal { background: #7f8c8d; color: #fff; }
+  .bb-z { font-size: 0.68em; margin-top: 3px; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -227,6 +232,8 @@
   <strong>判定方式: 全39銘柄を同じ株価履歴から計算できる3指標</strong><br>
   <span style="font-size:0.85em">
   52週レンジ・週足RSI・ボリンジャーバンドのみ。PER・PBR・ROE・PEG・業績成長・SMA200は判定と表示から除外。利回りは参考表示のみ。<br>
+  RSIは現在値と14SMAを別ブロック表示。オレンジ = RSIが14SMAより上 / 青 = 下（比較自体は判定外）。<br>
+  BBは現在値が「-1σ〜0σ」「0σ〜+1σ」「+1σ〜+2σ」など、どの区間にいるかを表示。<br>
   チップ色: <span style="background:#27ae60;color:#fff;padding:1px 6px;border-radius:3px">✓ 0</span> = ペナルティなし /
   <span style="background:#fadbd8;color:#922b21;padding:1px 6px;border-radius:3px">-1</span> = 軽い減点 /
   <span style="background:#c0392b;color:#fff;padding:1px 6px;border-radius:3px">-2</span> = 重い減点
@@ -284,7 +291,7 @@
 </div>
 
 <script>
-const EMBEDDED_API_DATA = {"prices": {"2269": 4248.0, "2802": 5566.0, "1332": 1310.0, "2702": 7800.0, "3197": 3258.0, "9861": 3779.0, "7550": 11350.0, "7616": 2059.5, "3397": 4203.0, "3563": 5861.0, "3561": 1588.0, "8267": 1374.0, "7512": 856.0, "3222": 827.0, "7453": 4499.0, "3048": 1727.5, "3088": 2516.0, "4661": 2966.5, "6819": 475.0, "4343": 2843.0, "8136": 1282.5, "9433": 2877.5, "4755": 763.7999877929688, "3003": 1757.0, "3387": 777.0, "8801": 1457.0, "9602": 1506.0, "2579": 3978.0, "3391": 2404.5, "3382": 2070.5, "9418": 1727.0, "7203": 3020.0, "8303": 1595.5, "4751": 1266.0, "2432": 2536.0, "2590": 2964.0, "2695": 1681.0, "9020": 3511.0, "4825": 2029.0}, "rsis": {"2269": 71.4129823709386, "2802": 59.62108964113426, "1332": 55.95243450747341, "2702": 54.99276371448442, "3197": 59.894611251727056, "9861": 69.20334498840012, "7550": 68.41886678568116, "7616": 62.987527067287644, "3397": 53.43209711887712, "3563": 66.55551689834114, "3561": 60.57224714553457, "8267": 36.392431540855036, "7512": 49.866221240429404, "3222": 46.80909097505716, "7453": 66.25462742671111, "3048": 54.32966749824494, "3088": 50.6831009350858, "4661": 61.180107724466836, "6819": 52.02046288200374, "4343": 62.77107036920366, "8136": 60.53398053254522, "9433": 59.983682389536085, "4755": 46.963887171340886, "3003": 52.82019828017765, "3387": 57.20345392183391, "8801": 38.172601398518985, "9602": 53.60441225857491, "2579": 56.35216156727233, "3391": 56.91896948748555, "3382": 53.71814217247223, "9418": 51.24574470915918, "7203": 50.52242223237514, "8303": 56.23275711893431, "4751": 44.44661516736887, "2432": 50.61917377393213, "2590": 65.99179915006758, "2695": 51.152000309960115, "9020": 47.67318810345628, "4825": 52.48794149869415}, "high52s": {"2269": 4248.0, "2802": 6175.0, "1332": 1539.71826171875, "2702": 8590.0, "3197": 3714.678955078125, "9861": 4040.0, "7550": 11595.0, "7616": 2158.5, "3397": 5309.57958984375, "3563": 5928.0, "3561": 1726.0, "8267": 2868.67919921875, "7512": 939.7794189453125, "3222": 991.8533325195312, "7453": 4526.0, "3048": 1863.0, "3088": 3200.826904296875, "4661": 3696.72509765625, "6819": 496.1111145019531, "4343": 3933.544189453125, "8136": 1708.591064453125, "9433": 3108.0, "4755": 1056.0, "3003": 2030.055908203125, "3387": 824.580322265625, "8801": 2124.775146484375, "9602": 2001.368896484375, "2579": 4591.0, "3391": 2931.05029296875, "3382": 2348.18798828125, "9418": 2176.12060546875, "7203": 3886.135986328125, "8303": 2073.12548828125, "4751": 1809.812744140625, "2432": 2760.5, "2590": 3090.0, "2695": 1985.5030517578125, "9020": 4155.3798828125, "4825": 2316.7275390625}, "low52s": {"2269": 2909.241455078125, "2802": 3282.5166015625, "1332": 954.9893188476562, "2702": 5948.54541015625, "3197": 2633.455078125, "9861": 2963.601318359375, "7550": 7438.0, "7616": 1655.7728271484375, "3397": 3569.0, "3563": 3162.5, "3561": 1309.311767578125, "8267": 1298.0, "7512": 811.0, "3222": 774.0, "7453": 2644.68017578125, "3048": 1517.93017578125, "3088": 2209.0, "4661": 2125.5, "6819": 431.81817626953125, "4343": 2307.0, "8136": 839.0, "9433": 2280.993408203125, "4755": 690.2000122070312, "3003": 1478.983154296875, "3387": 690.0, "8801": 1448.0, "9602": 1199.0, "2579": 2399.50244140625, "3391": 1904.0, "3382": 1834.0, "9418": 1513.0, "7203": 2686.0, "8303": 1359.0, "4751": 1228.0, "2432": 2157.6142578125, "2590": 2381.029052734375, "2695": 1520.0, "9020": 3280.0, "4825": 1774.6697998046875}, "bb_uppers": {"2269": 4293.725415194935, "2802": 5632.49251355122, "1332": 1327.8796576679213, "2702": 8339.932198520084, "3197": 3352.631311945104, "9861": 3991.181464978124, "7550": 11686.700540739239, "7616": 2147.981165076739, "3397": 4506.228972821947, "3563": 6030.757987368679, "3561": 1701.8015037459386, "8267": 1437.9438113971462, "7512": 875.2306549349079, "3222": 848.3041819951488, "7453": 4557.800008004593, "3048": 1818.1865941183332, "3088": 2646.5494354055395, "4661": 3195.2345467230284, "6819": 481.86482998758413, "4343": 2868.1846795057377, "8136": 1430.2980787104507, "9433": 3058.691586802225, "4755": 890.1175244862392, "3003": 1875.478791990351, "3387": 810.1654799826181, "8801": 1640.2746210946782, "9602": 1601.9239954798522, "2579": 4610.685258657825, "3391": 2548.9123133870394, "3382": 2235.1067420439567, "9418": 1781.2002568297278, "7203": 3143.8478319324586, "8303": 1615.6433694255063, "4751": 1625.6498247338918, "2432": 2549.9442562794493, "2590": 3079.346081114082, "2695": 1722.6357735829154, "9020": 3902.7246100119437, "4825": 2035.8486127070998}, "bb_lowers": {"2269": 3480.774584805065, "2802": 4704.50748644878, "1332": 1209.0203423320788, "2702": 7396.067801479916, "3197": 2905.868688054896, "9861": 3480.2185350218756, "7550": 8477.39945926076, "7616": 1901.168834923261, "3397": 3944.6710271780535, "3563": 5247.342012631321, "3561": 1533.7984962540613, "8267": 1312.4061886028537, "7512": 811.0693450650921, "3222": 782.1958180048512, "7453": 4081.099991995407, "3048": 1632.3134058816668, "3088": 2371.550564594461, "4661": 2583.865453276972, "6819": 470.63517001241587, "4343": 2590.1153204942625, "8136": 1092.6019212895494, "9433": 2758.658413197775, "4755": 743.542466968839, "3003": 1673.6212080096489, "3387": 734.534520017382, "8801": 1418.375378905322, "9602": 1352.5260045201476, "2579": 3632.614741342174, "3391": 2293.5376866129604, "3382": 1957.2432579560439, "9418": 1639.7997431702722, "7203": 2823.6521680675414, "8303": 1354.2066305744936, "4751": 1231.700175266108, "2432": 2372.8057437205507, "2590": 2811.953918885918, "2695": 1569.1642264170848, "9020": 3265.475389988056, "4825": 1899.6513872929002}, "div_yields": {"2269": 2.59, "2802": 0.9, "1332": 2.44, "2702": 0.82, "3197": 0.83, "9861": 0.58, "7550": 0.7, "7616": 0.24, "3397": 0.29, "3563": 0.34, "3561": 1.51, "8267": 1.02, "7512": 1.87, "3222": 1.93, "7453": 0.71, "3048": 2.49, "3088": 2.23, "4661": 0.54, "6819": 4.18, "4343": 0.7, "8136": 1.25, "9433": 2.92, "4755": null, "3003": 3.81, "3387": 0.64, "8801": 2.54, "9602": 1.46, "2579": 1.81, "3391": 2.0, "3382": 2.9, "9418": 0.98, "7203": 3.31, "8303": 1.25, "4751": 1.58, "2432": 2.6, "2590": 1.01, "2695": 0.89, "9020": 2.39, "4825": 2.5}, "fetched_at": "2026-08-16 22:44:07 JST"};
+const EMBEDDED_API_DATA = {"prices": {"2269": 4248.0, "2802": 5566.0, "1332": 1310.0, "2702": 7800.0, "3197": 3258.0, "9861": 3779.0, "7550": 11350.0, "7616": 2059.5, "3397": 4203.0, "3563": 5861.0, "3561": 1588.0, "8267": 1374.0, "7512": 856.0, "3222": 827.0, "7453": 4499.0, "3048": 1727.5, "3088": 2516.0, "4661": 2966.5, "6819": 475.0, "4343": 2843.0, "8136": 1282.5, "9433": 2877.5, "4755": 763.7999877929688, "3003": 1757.0, "3387": 777.0, "8801": 1457.0, "9602": 1506.0, "2579": 3978.0, "3391": 2404.5, "3382": 2070.5, "9418": 1727.0, "7203": 3020.0, "8303": 1595.5, "4751": 1266.0, "2432": 2536.0, "2590": 2964.0, "2695": 1681.0, "9020": 3511.0, "4825": 2029.0}, "rsis": {"2269": 71.41298430992609, "2802": 59.62108964113426, "1332": 55.952432683205394, "2702": 54.99276371448442, "3197": 59.89460919304859, "9861": 69.2033446536667, "7550": 68.41886392494285, "7616": 62.987527067287644, "3397": 53.43209711887712, "3563": 66.55551689834114, "3561": 60.57225163126179, "8267": 36.392431540855036, "7512": 49.866221240429404, "3222": 46.809099446138944, "7453": 66.25462965365489, "3048": 54.32966749824494, "3088": 50.68310087831018, "4661": 61.180109683406464, "6819": 52.02046288200374, "4343": 62.77107036920366, "8136": 60.53398053254522, "9433": 59.98368230834366, "4755": 46.963887171340886, "3003": 52.82019826348061, "3387": 57.20345739697203, "8801": 38.172601398518985, "9602": 53.60441225857491, "2579": 56.35216156727233, "3391": 56.91896948748555, "3382": 53.71814217247223, "9418": 51.24574470915918, "7203": 50.52242223237514, "8303": 56.23275711893431, "4751": 44.44661516736887, "2432": 50.61917377393213, "2590": 65.991801587716, "2695": 51.152000309960115, "9020": 47.67319170833987, "4825": 52.487937461246325}, "rsi_sma14s": {"2269": 58.57813634103174, "2802": 64.44583049666903, "1332": 53.14863358662656, "2702": 56.59203326854918, "3197": 44.69299317144705, "9861": 57.589170063363554, "7550": 45.2042390177654, "7616": 53.05794254420258, "3397": 40.83193498327554, "3563": 59.82830199226275, "3561": 60.47233951613932, "8267": 32.46279668738744, "7512": 42.39665563876747, "3222": 42.31807603115385, "7453": 55.4011175093192, "3048": 52.79397122033383, "3088": 41.839497135850664, "4661": 46.341917600568316, "6819": 46.94615029268255, "4343": 43.533369480397596, "8136": 48.73996487388821, "9433": 60.19650856379639, "4755": 47.313902670322115, "3003": 48.62189591982446, "3387": 48.48784494592782, "8801": 40.398546663854795, "9602": 38.23417452957125, "2579": 61.069706560236575, "3391": 46.09454012339084, "3382": 47.72782066430653, "9418": 40.138919951207875, "7203": 44.290230487384136, "8303": 46.402571501913236, "4751": 53.06875428047243, "2432": 51.03531836654939, "2590": 58.719894500780974, "2695": 42.81080447523898, "9020": 46.96527539582514, "4825": 52.71164673494385}, "high52s": {"2269": 4248.0, "2802": 6175.0, "1332": 1539.71826171875, "2702": 8590.0, "3197": 3714.6787109375, "9861": 4040.0, "7550": 11595.0, "7616": 2158.5, "3397": 5309.57958984375, "3563": 5928.0, "3561": 1726.0, "8267": 2868.67919921875, "7512": 939.7794189453125, "3222": 991.8533325195312, "7453": 4526.0, "3048": 1863.0, "3088": 3200.82666015625, "4661": 3696.72509765625, "6819": 496.1111145019531, "4343": 3933.544189453125, "8136": 1708.591064453125, "9433": 3108.0, "4755": 1056.0, "3003": 2030.055908203125, "3387": 824.580322265625, "8801": 2124.775146484375, "9602": 2001.368896484375, "2579": 4591.0, "3391": 2931.05029296875, "3382": 2348.18798828125, "9418": 2176.12060546875, "7203": 3886.135986328125, "8303": 2073.12548828125, "4751": 1809.812744140625, "2432": 2760.5, "2590": 3090.0, "2695": 1985.5030517578125, "9020": 4155.3798828125, "4825": 2316.7275390625}, "low52s": {"2269": 2909.241455078125, "2802": 3282.5166015625, "1332": 954.9893798828125, "2702": 5948.54541015625, "3197": 2633.455078125, "9861": 2963.601318359375, "7550": 7438.0, "7616": 1655.7728271484375, "3397": 3569.0, "3563": 3162.5, "3561": 1309.311767578125, "8267": 1298.0, "7512": 811.0, "3222": 774.0, "7453": 2644.68017578125, "3048": 1517.93017578125, "3088": 2209.0, "4661": 2125.5, "6819": 431.81817626953125, "4343": 2307.0, "8136": 839.0, "9433": 2280.993408203125, "4755": 690.2000122070312, "3003": 1478.983154296875, "3387": 690.0, "8801": 1448.0, "9602": 1199.0, "2579": 2399.50244140625, "3391": 1904.0, "3382": 1834.0, "9418": 1513.0, "7203": 2686.0, "8303": 1359.0, "4751": 1228.0, "2432": 2157.6142578125, "2590": 2381.029052734375, "2695": 1520.0, "9020": 3280.0, "4825": 1774.6697998046875}, "bb_uppers": {"2269": 4293.725415194935, "2802": 5632.49251355122, "1332": 1327.8796576679213, "2702": 8339.932198520084, "3197": 3352.631311945104, "9861": 3991.181464978124, "7550": 11686.700540739239, "7616": 2147.981165076739, "3397": 4506.228972821947, "3563": 6030.757987368679, "3561": 1701.8015037459386, "8267": 1437.9438113971462, "7512": 875.2306549349079, "3222": 848.3041819951488, "7453": 4557.800008004593, "3048": 1818.1865941183332, "3088": 2646.5494354055395, "4661": 3195.2345467230284, "6819": 481.86482998758413, "4343": 2868.1846795057377, "8136": 1430.2980787104507, "9433": 3058.691586802225, "4755": 890.1175244862392, "3003": 1875.478791990351, "3387": 810.1654799826181, "8801": 1640.2746210946782, "9602": 1601.9239954798522, "2579": 4610.685258657825, "3391": 2548.9123133870394, "3382": 2235.1067420439567, "9418": 1781.2002568297278, "7203": 3143.8478319324586, "8303": 1615.6433694255063, "4751": 1625.6498247338918, "2432": 2549.9442562794493, "2590": 3079.346081114082, "2695": 1722.6357735829154, "9020": 3902.7246100119437, "4825": 2035.8486127070998}, "bb_lowers": {"2269": 3480.774584805065, "2802": 4704.50748644878, "1332": 1209.0203423320788, "2702": 7396.067801479916, "3197": 2905.868688054896, "9861": 3480.2185350218756, "7550": 8477.39945926076, "7616": 1901.168834923261, "3397": 3944.6710271780535, "3563": 5247.342012631321, "3561": 1533.7984962540613, "8267": 1312.4061886028537, "7512": 811.0693450650921, "3222": 782.1958180048512, "7453": 4081.099991995407, "3048": 1632.3134058816668, "3088": 2371.550564594461, "4661": 2583.865453276972, "6819": 470.63517001241587, "4343": 2590.1153204942625, "8136": 1092.6019212895494, "9433": 2758.658413197775, "4755": 743.542466968839, "3003": 1673.6212080096489, "3387": 734.534520017382, "8801": 1418.375378905322, "9602": 1352.5260045201476, "2579": 3632.614741342174, "3391": 2293.5376866129604, "3382": 1957.2432579560439, "9418": 1639.7997431702722, "7203": 2823.6521680675414, "8303": 1354.2066305744936, "4751": 1231.700175266108, "2432": 2372.8057437205507, "2590": 2811.953918885918, "2695": 1569.1642264170848, "9020": 3265.475389988056, "4825": 1899.6513872929002}, "div_yields": {"2269": 2.59, "2802": 0.9, "1332": 2.44, "2702": 0.82, "3197": 0.83, "9861": 0.58, "7550": 0.7, "7616": 0.24, "3397": 0.29, "3563": 0.34, "3561": 1.51, "8267": 1.02, "7512": 1.87, "3222": 1.93, "7453": 0.71, "3048": 2.49, "3088": 2.23, "4661": 0.54, "6819": 4.18, "4343": 0.7, "8136": 1.25, "9433": 2.92, "4755": null, "3003": 3.81, "3387": 0.64, "8801": 2.54, "9602": 1.46, "2579": 1.81, "3391": 2.0, "3382": 2.9, "9418": 0.98, "7203": 3.31, "8303": 1.25, "4751": 1.58, "2432": 2.6, "2590": 1.01, "2695": 0.89, "9020": 2.39, "4825": 2.46}, "fetched_at": "2026-08-17 00:51:27 JST"};
 const _origFetch = window.fetch;
 window.fetch = async (url, opts) => {
   if (typeof url === 'string' && (url === '/api/prices' || url.startsWith('/api/prices'))) {
@@ -311,7 +318,7 @@ window.fetch = async (url, opts) => {
 </style>
 <script>
   const STOCKS = [{"market": "プライム", "cat": "食品", "sub": "総合食品", "code": "2269", "name": "明治ホールディングス", "yutai": "菓子・乳製品・健康食品の詰め合わせ", "min_shares": 100, "last_verified": null, "starred": true, "rating": "bad", "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "食品", "sub": "調味料", "code": "2802", "name": "味の素", "yutai": "調味料・加工食品・冷凍食品の詰め合わせ", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "食品", "sub": "水産", "code": "1332", "name": "ニッスイ", "yutai": "水産加工品・缶詰等の詰め合わせ", "min_shares": 100, "last_verified": null, "starred": true, "rating": "bad", "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "スタンダード", "cat": "外食", "sub": "ハンバーガー", "code": "2702", "name": "日本マクドナルドHD", "yutai": "自社店舗で使えるバーガー類等の優待食事券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "RSI75.9で買われ過ぎ。新規買いは禁物、まず7,500円割れまで待つ", "yutai_shares": 100.0, "yutai_value": 5100.0, "yutai_item": "食事券"}, {"market": "プライム", "cat": "外食", "sub": "レストラン", "code": "3197", "name": "すかいらーくHD", "yutai": "自社グループ店舗で使える優待カード", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "業績回復中だがPER40倍は強気価格、2,800円付近で再検討", "yutai_shares": 100.0, "yutai_value": 2000.0, "yutai_item": "食事券"}, {"market": "スタンダード", "cat": "外食", "sub": "牛丼", "code": "9861", "name": "吉野家HD", "yutai": "自社店舗で使える優待食事券・自社冷凍商品", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "円安で原価圧迫、ROE7.1は平均11.3より低下中。3,050円割れで反転待ち", "yutai_shares": 100.0, "yutai_value": 2000.0, "yutai_item": "食事券"}, {"market": "プライム", "cat": "外食", "sub": "外食", "code": "7550", "name": "ゼンショーHD", "yutai": "すき家等グループ店舗で使える優待食事券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "すき家+はま寿司+海外展開で外食グロース筆頭。RSI調整中、7,800円台で打診買い", "yutai_shares": 100.0, "yutai_value": 1000.0, "yutai_item": "食事券"}, {"market": "スタンダード", "cat": "外食", "sub": "外食", "code": "7616", "name": "コロワイド", "yutai": "グループ店舗で使えるポイント優待", "min_shares": 500, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "外食", "sub": "うどん", "code": "3397", "name": "トリドールHD", "yutai": "丸亀製麺等で使える優待割引券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "海外投資負担、PER77倍はバブル水準。下落余地大、3,650円割れで打診検討", "yutai_shares": 200.0, "yutai_value": 14000.0, "yutai_item": "食事券"}, {"market": "プライム", "cat": "外食", "sub": "回転寿司", "code": "3563", "name": "FOOD&LIFE COMPANIES", "yutai": "スシロー等で使える優待割引券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "ROE28.4%は質高いが割高、8,500円台で打診買い検討", "yutai_shares": 100.0, "yutai_value": 5500.0, "yutai_item": "チケット"}, {"market": "プライム", "cat": "外食", "sub": "ラーメン", "code": "3561", "name": "力の源ホールディングス", "yutai": "一風堂で使える優待食事券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 4000.0, "yutai_item": "優待券"}, {"market": "プライム", "cat": "小売・百貨店・家電・ドラッグ", "sub": "総合小売", "code": "8267", "name": "イオン", "yutai": "オーナーズカード(店舗での買物 3〜7% キャッシュバック)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "PER57割高、ROE平均2.5%と構造的低収益。優待ホルダー以外は1,400円以下まで待つ", "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "スタンダード", "cat": "小売・百貨店・家電・ドラッグ", "sub": "総合小売", "code": "7512", "name": "イオン北海道", "yutai": "優待券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "", "yutai_shares": 100.0, "yutai_value": 2500, "yutai_item": "優待券"}, {"market": "スタンダード", "cat": "小売・百貨店・家電・ドラッグ", "sub": "総合小売", "code": "3222", "name": "ユナイテッド・スーパーマーケット・ホールディングス", "yutai": "優待券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "", "yutai_shares": 100.0, "yutai_value": 6000, "yutai_item": "優待券"}, {"market": "プライム", "cat": "小売・百貨店・家電・ドラッグ", "sub": "雑貨", "code": "7453", "name": "良品計画", "yutai": "無印良品店舗・ネットで使える5%割引カード", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "ROE-4.8%赤字転落、業績反転シグナル(次期決算)確認後に3,500円付近で検討", "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "小売・百貨店・家電・ドラッグ", "sub": "家電", "code": "3048", "name": "ビックカメラ", "yutai": "自社店舗で使えるお買物優待券(2,000円〜)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 3000.0, "yutai_item": "優待券"}, {"market": "プライム", "cat": "小売・百貨店・家電・ドラッグ", "sub": "ドラッグ", "code": "3088", "name": "マツキヨココカラ&カンパニー", "yutai": "自社店舗で使えるお買物優待カード(2,000円分)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 4000.0, "yutai_item": "優待ポイント"}, {"market": "プライム", "cat": "テーマパーク・玩具・ゲーム・キャラクター", "sub": "テーマパーク", "code": "4661", "name": "オリエンタルランド", "yutai": "東京ディズニーランド/シーの1デーパスポート(株数・保有期間で枚数変動)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "RSI週28と売られ過ぎ。コロナ後業績回復+ハリポタ等で長期成長続く。2,300円割れで打診買い", "yutai_shares": 100.0, "yutai_value": 9900.0, "yutai_item": "チケット"}, {"market": "スタンダード", "cat": "テーマパーク・玩具・ゲーム・キャラクター", "sub": "テーマパーク", "code": "6819", "name": "伊豆シャボテンリゾート", "yutai": "", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "", "yutai_shares": 200.0, "yutai_value": 5400.0, "yutai_item": "チケット"}, {"market": "プライム", "cat": "テーマパーク・玩具・ゲーム・キャラクター", "sub": "遊び場", "code": "4343", "name": "イオンファンタジー", "yutai": "", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "", "yutai_shares": 100.0, "yutai_value": 8000.0, "yutai_item": "優待券・魚沼産米"}, {"market": "プライム", "cat": "テーマパーク・玩具・ゲーム・キャラクター", "sub": "キャラクター", "code": "8136", "name": "サンリオ", "yutai": "ピューロランド/ハーモニーランド共通券+自社キャラクター商品", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 7800.0, "yutai_item": "チケット"}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "通信", "code": "9433", "name": "KDDI", "yutai": "au PAY マーケットの商品カタログ(地方特産品等)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 200.0, "yutai_value": 2000.0, "yutai_item": "ponta"}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "通信・EC", "code": "4755", "name": "楽天グループ", "yutai": "楽天キャッシュ・楽天モバイル無料SIM等", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "楽天モバイル黒字化遅延で長期赤字継続、ハイリスク。710円割れの一時反発狙いのみ", "yutai_shares": 100.0, "yutai_value": 36000.0, "yutai_item": "楽天モバイル"}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "不動産", "code": "3003", "name": "ヒューリック", "yutai": "カタログギフト(食品・雑貨等から選択、3,000〜)", "min_shares": 300, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "PER12.2割安+ROE12%安定+カタログ優待+高配当。1,750円付近の押し目で拾う", "yutai_shares": 300.0, "yutai_value": 6000.0, "yutai_item": "カタログギフト"}, {"market": "プライム", "cat": "外食", "sub": "外食", "code": "3387", "name": "クリエイト・レストランツHD", "yutai": "グループ店舗で使える優待食事券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "優待目的でも500株(36万円)必要、コスパ悪い。技術的反発見込めるのは640円付近", "yutai_shares": 100.0, "yutai_value": 1500.0, "yutai_item": "食事券"}, {"market": "プライム", "cat": "旅行・ホテル・映画", "sub": "ホテル", "code": "8801", "name": "三井不動産", "yutai": "三井ガーデンホテル・系列リゾート割引券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "不動産大手、優待ホテル割引も実用的。長期保有OK、1,620円付近で押し目買い", "yutai_shares": 100.0, "yutai_value": 1000.0, "yutai_item": "ポイント"}, {"market": "プライム", "cat": "旅行・ホテル・映画", "sub": "映画", "code": "9602", "name": "東宝", "yutai": "TOHOシネマズ等で使える映画招待券(年4枚~)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": "映画館回復+人気アニメで業績好調。優待映画券単独で年8,000円超の価値。1,400円で拾い場", "yutai_shares": 100.0, "yutai_value": 2000.0, "yutai_item": "チケット"}, {"market": "プライム", "cat": "飲料・酒類", "sub": "清涼飲料", "code": "2579", "name": "コカ・コーラ ボトラーズジャパンHD", "yutai": "自社製品(コカ・コーラ製品詰め合わせ等)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 2000.0, "yutai_item": "チケット"}, {"market": "プライム", "cat": "小売・百貨店・家電・ドラッグ", "sub": "ドラッグ", "code": "3391", "name": "ツルハホールディングス", "yutai": "自社店舗で使える優待商品券+割引券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 5000.0, "yutai_item": "優待券"}, {"market": "プライム", "cat": "小売・百貨店・家電・ドラッグ", "sub": "コンビニ・総合小売", "code": "3382", "name": "セブン&アイ・ホールディングス", "yutai": "※株主優待は2024年頃に縮小・廃止の可能性、要確認", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 2500.0, "yutai_item": "優待券"}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "動画配信", "code": "9418", "name": "U-NEXT HOLDINGS", "yutai": "U-NEXTポイント等(要確認)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 7567.0, "yutai_item": "U-Next"}, {"market": "プライム", "cat": "自動車・金融", "sub": "自動車", "code": "7203", "name": "トヨタ自動車", "yutai": "※株主優待制度なし(株価監視目的で追加)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 3000.0, "yutai_item": "ToyotaWallet"}, {"market": "プライム", "cat": "自動車・金融", "sub": "銀行", "code": "8303", "name": "SBI新生銀行", "yutai": "振込手数料無料等の銀行特典(要確認)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 2000.0, "yutai_item": "Ripple"}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "メディア", "code": "4751", "name": "サイバーエージェント", "yutai": "ABEMAプレミアム3ヶ月無料コード等(要確認)", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 3240.0, "yutai_item": "Abemaプライム"}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "情報・通信", "code": "2432", "name": "ディー・エヌ・エー", "yutai": "バスケ観戦チケット", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": 100.0, "yutai_value": 3500, "yutai_item": "バスケ観戦チケット"}, {"market": "プライム", "cat": "飲料・酒類", "sub": "清涼飲料", "code": "2590", "name": "ダイドーグループホールディングス", "yutai": "自社グループ商品の詰め合わせ", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "外食", "sub": "回転寿司", "code": "2695", "name": "くら寿司", "yutai": "店舗で使える株主優待割引券", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "航空・鉄道", "sub": "鉄道", "code": "9020", "name": "東日本旅客鉄道", "yutai": "株主サービス券等（保有数により鉄道割引券）", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}, {"market": "プライム", "cat": "通信・不動産・カタログ・EC", "sub": "気象情報", "code": "4825", "name": "ウェザーニューズ", "yutai": "ウェザーニュースPro等の有料サービス無料利用", "min_shares": 100, "last_verified": null, "starred": true, "rating": null, "judgment": null, "target_price": null, "analysis": null, "yutai_shares": null, "yutai_value": null, "yutai_item": null}];
-  let _prices = {}, _rsis = {};
+  let _prices = {}, _rsis = {}, _rsiSma14s = {};
   let _high52s = {}, _low52s = {};
   let _bbUppers = {}, _bbLowers = {};
   let _divYields = {};
@@ -354,9 +361,10 @@ window.fetch = async (url, opts) => {
 
   // ===== 全39銘柄で同じ条件になる株価指標 (3指標、減点法) =====
   // 同じ株価履歴から計算した「52週レンジ・週足RSI・BB」の過熱サインだけを減点する。
-  function valuationLevel(price, high52, low52, rsi, bbUpper, bbLower) {
+  function valuationLevel(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower) {
     const items = [];
-    const push = (score, label, value, full) => items.push({ score, label, value, full });
+    const push = (score, label, value, full, extra = {}) =>
+      items.push({ score, label, value, full, ...extra });
     // 1. 52週レンジ位置
     if (high52 != null && low52 != null && high52 > low52 && price != null) {
       const pos = (price - low52) / (high52 - low52);
@@ -373,19 +381,41 @@ window.fetch = async (url, opts) => {
     if (rsi == null) push(0, 'RSI週', '—', 'RSI週計算不能');
     else {
       const v = rsi.toFixed(1);
-      if      (rsi >= 70) push(-2, 'RSI週', v, `RSI週 ${v} 買われ過ぎ`);
-      else if (rsi >= 50) push(-1, 'RSI週', v, `RSI週 ${v} 強い`);
-      else                push( 0, 'RSI週', v, `RSI週 ${v} (50未満、ペナルティなし)`);
+      let relation = 'unknown', relationLabel = '比較不能', diff = null;
+      if (rsiSma14 != null) {
+        diff = rsi - rsiSma14;
+        if (diff > 0.05) { relation = 'above'; relationLabel = '▲ 上'; }
+        else if (diff < -0.05) { relation = 'below'; relationLabel = '▼ 下'; }
+        else { relation = 'equal'; relationLabel = '＝ 同水準'; }
+      }
+      const smaDetail = rsiSma14 != null
+        ? ` / RSI 14SMA ${rsiSma14.toFixed(1)}より${relationLabel}` : '';
+      const extra = { rsiSma14, relation, relationLabel, diff };
+      if      (rsi >= 70) push(-2, 'RSI週', v, `RSI週 ${v} 買われ過ぎ${smaDetail}`, extra);
+      else if (rsi >= 50) push(-1, 'RSI週', v, `RSI週 ${v} 強い${smaDetail}`, extra);
+      else                push( 0, 'RSI週', v, `RSI週 ${v} (50未満、ペナルティなし)${smaDetail}`, extra);
     }
-    // 3. ボリンジャーバンド位置: 上限近接以上で減点
+    // 3. ボリンジャーバンド位置: 現在値がどのσ区間にいるかを表示
     if (bbUpper == null || bbLower == null || price == null) {
       push(0, 'BB', '—', 'BB計算不能');
-    } else if (price >= bbUpper) {
-      push(-2, 'BB', '上限超', `BB上限超え ${Math.round(price)}≥${Math.round(bbUpper)}`);
-    } else if (price >= bbUpper * 0.98) {
-      push(-1, 'BB', '上限近', `BB上限近 ${Math.round(price)}`);
     } else {
-      push( 0, 'BB', '安全', 'BB上限から離れている (ペナルティなし)');
+      const middle = (bbUpper + bbLower) / 2;
+      const sigma = (bbUpper - bbLower) / 4;
+      if (sigma <= 0) {
+        push(0, 'BB', '—', 'BB標準偏差を計算不能');
+      } else {
+        const z = (price - middle) / sigma;
+        let band;
+        if      (z >=  2) band = '+2σ以上';
+        else if (z >=  1) band = '+1σ〜+2σ';
+        else if (z >=  0) band = '0σ〜+1σ';
+        else if (z >= -1) band = '-1σ〜0σ';
+        else if (z >= -2) band = '-2σ〜-1σ';
+        else               band = '-2σ以下';
+        const score = z >= 2 ? -2 : z >= 1 ? -1 : 0;
+        const signedZ = `${z >= 0 ? '+' : ''}${z.toFixed(2)}σ`;
+        push(score, 'BB', band, `BB位置 ${band} (現在 ${signedZ})`, { bbZ: z, signedZ });
+      }
     }
     const score = items.reduce((s, it) => s + it.score, 0);
     let label, cls;
@@ -394,8 +424,8 @@ window.fetch = async (url, opts) => {
     else                   { label = '🔴 過熱気味'; cls = 'expensive'; }
     return { label, cls, score, items };
   }
-  function valuationBadge(price, high52, low52, rsi, bbUpper, bbLower) {
-    const r = valuationLevel(price, high52, low52, rsi, bbUpper, bbLower);
+  function valuationBadge(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower) {
+    const r = valuationLevel(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower);
     const tip = r.items.map(it => `${it.full} (${it.score})`).join('\n') + `\n= 合計 ${r.score}`;
     return `<span class="vbadge ${r.cls}" title="${escapeHtml(tip)}">${r.label} <small>${r.score}</small></span>`;
   }
@@ -431,11 +461,22 @@ window.fetch = async (url, opts) => {
       else if (it.score === -1) cls = 'ic-bad';            // 軽い減点 = 薄赤
       else                      cls = 'ic-bad-strong';     // 重い減点 = 濃赤
       const display = it.score === 0 ? '✓' : `${it.score}`;
-      return `<div class="ic ${cls}" title="${escapeHtml(it.full)}">
+      const bbZHtml = it.label === 'BB' && it.signedZ
+        ? `<div class="bb-z">現在 ${it.signedZ}</div>` : '';
+      const mainBlock = `<div class="ic ${cls}" title="${escapeHtml(it.full)}">
         <div class="ic-name">${it.label}</div>
         <div class="ic-val">${it.value}</div>
+        ${bbZHtml}
         <div class="ic-pts">${display}</div>
       </div>`;
+      if (it.label !== 'RSI週' || it.rsiSma14 == null) return mainBlock;
+      const smaTip = `RSI ${it.value} / 14SMA ${it.rsiSma14.toFixed(1)} → RSIは${it.relationLabel}`;
+      const smaBlock = `<div class="ic ic-rsi-sma ${it.relation}" title="${escapeHtml(smaTip)}">
+        <div class="ic-name">RSI 14SMA</div>
+        <div class="ic-val">${it.rsiSma14.toFixed(1)}</div>
+        <div class="ic-pts">RSI ${it.relationLabel}</div>
+      </div>`;
+      return mainBlock + smaBlock;
     }).join('');
   }
 
@@ -451,7 +492,7 @@ window.fetch = async (url, opts) => {
       const high52 = _high52s[s.code], low52 = _low52s[s.code];
       const rangePos = (high52 != null && low52 != null && high52 > low52 && p != null)
         ? (p - low52) / (high52 - low52) * 100 : null;
-      const val = valuationLevel(p, high52, low52, _rsis[s.code], _bbUppers[s.code], _bbLowers[s.code]);
+      const val = valuationLevel(p, high52, low52, _rsis[s.code], _rsiSma14s[s.code], _bbUppers[s.code], _bbLowers[s.code]);
       return { s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, rangePos };
     });
 
@@ -496,14 +537,14 @@ window.fetch = async (url, opts) => {
 
       list.forEach(({ s, p }) => {
         const badgeMkt = s.market === 'プライム' ? 'badge-prime' : 'badge-standard';
-        const rsi = _rsis[s.code];
+        const rsi = _rsis[s.code], rsiSma14 = _rsiSma14s[s.code];
         const card = document.createElement('div');
         card.className = 'card';
         card.innerHTML = `
           <div class="card-head">
             <span class="code">${s.code}</span>
             <span class="badge ${badgeMkt}">${s.market}</span>
-            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, _bbUppers[s.code], _bbLowers[s.code])}
+            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code])}
             <span class="name">${escapeHtml(s.name)}</span>
             <button class="star-btn" data-code="${s.code}" title="★解除">★</button>
           </div>
@@ -521,7 +562,7 @@ window.fetch = async (url, opts) => {
                 ${upLow != null ? `<span style="font-size:0.78em;color:#888">/ 安値 ${fmt(l)}円 +${upLow.toFixed(1)}%</span>` : ''}`;
             })()}
           </div>
-          <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
+          <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
           ${yieldBlockHtml(s, p, _divYields[s.code])}
           <div class="actions">
             <a href="https://finance.yahoo.co.jp/quote/${s.code}.T" target="_blank" rel="noopener">Y!</a>
@@ -539,7 +580,12 @@ window.fetch = async (url, opts) => {
       🟢 押し目候補 <strong style="color:#27ae60">${groups.cheap.length}</strong> /
       🟡 反発・注意 <strong style="color:#7f8c8d">${groups.neutral.length}</strong> /
       🔴 過熱気味 <strong style="color:#c0392b">${groups.expensive.length}</strong><br>
-      <span style="font-size:0.85em;color:#666">並び順: 過熱サインが少ない順 → 52週レンジ位置が低い順。利回りは参考表示のみ</span>`;
+      <span style="font-size:0.85em;color:#666">並び順: 過熱サインが少ない順 → 52週レンジ位置が低い順。利回りは参考表示のみ</span><br>
+      <span style="font-size:0.82em;color:#666">
+        RSI: <span style="background:#e67e22;color:#fff;padding:1px 4px;border-radius:3px">▲ 上</span> 14SMAより上 /
+        <span style="background:#2980b9;color:#fff;padding:1px 4px;border-radius:3px">▼ 下</span> 14SMAより下（判定外）。
+        BB: 現在値のσ区間と正確な位置を表示（+1σ以上は過熱減点）
+      </span>`;
   }
 
   async function refreshPrices() {
@@ -552,6 +598,7 @@ window.fetch = async (url, opts) => {
       const data = await res.json();
       _prices = data.prices || {};
       _rsis = data.rsis || {};
+      _rsiSma14s = data.rsi_sma14s || {};
       _high52s = data.high52s || {};
       _low52s = data.low52s || {};
       _bbUppers = data.bb_uppers || {};
