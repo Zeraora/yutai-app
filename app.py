@@ -333,6 +333,22 @@ def fetch_metrics() -> dict[str, dict[str, float | None]]:
         return dict(ex.map(_fetch_metrics, codes))
 
 
+def _fetch_dividend_yield(code: str) -> tuple[str, float | None]:
+    """参考表示用の配当利回りだけを取得する。判定・並び順には使用しない。"""
+    try:
+        value = yf.Ticker(f"{code}.T").info.get("dividendYield")
+        return code, float(value) if value is not None else None
+    except Exception:
+        return code, None
+
+
+def fetch_dividend_yields() -> dict[str, float | None]:
+    """全銘柄の配当利回りを並列取得する。"""
+    codes = [s["code"] for s in STOCKS]
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        return dict(ex.map(_fetch_dividend_yield, codes))
+
+
 @app.route("/api/prices")
 def api_prices():
     prices, rsis, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
@@ -1876,24 +1892,15 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   <span id="status">起動時に自動取得します…</span>
   <span style="margin-left:auto"></span>
   <label style="font-size:0.9em">
-    優待取得必要額 ≤ <input type="number" id="f-cost-max" value="" placeholder="指定なし" step="10" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> 万円
-  </label>
-  <label style="font-size:0.9em">
-    総合利回り ≥ <input type="number" id="f-yield-min" value="" placeholder="指定なし" step="0.5" min="0" style="width:80px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
-  </label>
-  <label style="font-size:0.9em">
     52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="30" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
 </div>
 
 <div class="summary" id="summary">
-  <strong>判定方式: 11指標減点法 + ⭐優良マーク</strong>(<code>0</code>が満点、減点が少ないほど候補)<br>
+  <strong>判定方式: 全39銘柄を同じ株価履歴から計算できる3指標</strong><br>
   <span style="font-size:0.85em">
-  価格系4(52週・SMA・RSI週・BB)+ バリュー3(PER・PBR・PEG)+ 配当2(配当・配当性向)+ 質2(成長・ROE質)。総合 <code>0</code>〜<code>-22</code>。<br>
-  🟢 <strong>割安圏</strong>(≥-4)/ 🟡 <strong>適正圏</strong>(-5〜-12)/ 🔴 <strong>割高圏</strong>(≤-13)<br>
-  <strong>⭐</strong> = 減点ゼロ + ROE平均 ≥ 12%(真の優良) /
-  <strong>☆</strong> = 減点≤2 + ROE平均≥12% + 業績成長プラス(準優良)<br>
+  52週レンジ・週足RSI・ボリンジャーバンドのみ。PER・PBR・ROE・PEG・業績成長・SMA200は判定と表示から除外。利回りは参考表示のみ。<br>
   チップ色: <span style="background:#27ae60;color:#fff;padding:1px 6px;border-radius:3px">✓ 0</span> = ペナルティなし /
   <span style="background:#fadbd8;color:#922b21;padding:1px 6px;border-radius:3px">-1</span> = 軽い減点 /
   <span style="background:#c0392b;color:#fff;padding:1px 6px;border-radius:3px">-2</span> = 重い減点
@@ -1952,20 +1959,14 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
 <script>
   const STOCKS = {{ stocks_json | safe }};
-  let _prices = {}, _pers = {}, _roes = {}, _avgRoes = {}, _rsis = {};
-  let _sma200s = {}, _rsi30s = {};
+  let _prices = {}, _rsis = {};
   let _high52s = {}, _low52s = {};
-  let _bbUppers = {}, _bbLowers = {}, _pbrs = {}, _divYields = {}, _pegs = {};
-  let _earningsGrowths = {}, _payoutRatios = {}, _equityRatios = {};
+  let _bbUppers = {}, _bbLowers = {};
+  let _divYields = {};
 
   function escapeHtml(s) {
     if (s == null) return '';
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-  function judgmentBadge(j) {
-    const labels = { buy: '🟢買い', hold: '🟡中立', avoid: '🔴見送り' };
-    if (!j) return '<span class="jbadge none">判定なし</span>';
-    return `<span class="jbadge ${j}">${labels[j] || j}</span>`;
   }
   function fmt(n, suf='') { return n == null ? '—' : Math.round(n).toLocaleString('ja-JP') + suf; }
 
@@ -1999,39 +2000,34 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     });
   }
 
-  // ===== 割安度判定 (11指標、減点法) =====
-  // 「割高 / 過熱 / リスク」サインがあれば減点(-1 または -2)、それ以外は 0。
-  // 最大は 0(全指標でペナルティなし)、最低は -22。減点が少ないほど候補。
-  function valuationLevel(price, high52, low52, sma200, rsi, per, pbr, divYield, peg, bbUpper, bbLower, avgRoe, roe, earningsGrowth, payoutRatio) {
+  // ===== 全39銘柄で同じ条件になる株価指標 (3指標、減点法) =====
+  // 同じ株価履歴から計算した「52週レンジ・週足RSI・BB」の過熱サインだけを減点する。
+  function valuationLevel(price, high52, low52, rsi, bbUpper, bbLower) {
     const items = [];
     const push = (score, label, value, full) => items.push({ score, label, value, full });
-    // 1. 52週レンジ位置(緩和: 80%以上だけ減点)
+    // 1. 52週レンジ位置
     if (high52 != null && low52 != null && high52 > low52 && price != null) {
       const pos = (price - low52) / (high52 - low52);
       const pct = (pos * 100).toFixed(0);
       const v = `${pct}%`;
-      if (pos >= 0.80) push(-2, '52週', v, `52週レンジ ${pct}% (高値圏 ≥80%)`);
-      else             push( 0, '52週', v, `52週レンジ ${pct}% (ペナルティなし)`);
+      if      (pos >= 0.80) push(-2, '52週', v, `52週レンジ ${pct}% (高値圏 ≥80%)`);
+      else if (pos >  0.30) push(-1, '52週', v, `52週レンジ ${pct}% (押し目基準外 >30%)`);
+      else if (pos <= 0.10) push( 0, '52週', v, `52週レンジ ${pct}% (強い押し目 ≤10%)`);
+      else if (pos <= 0.20) push( 0, '52週', v, `52週レンジ ${pct}% (深い押し目 ≤20%)`);
+      else if (pos <= 0.30) push( 0, '52週', v, `52週レンジ ${pct}% (押し目 ≤30%)`);
+      else                  push( 0, '52週', v, `52週レンジ ${pct}% (ペナルティなし)`);
     } else push(0, '52週', '—', '52週レンジ計算不能');
-    // 2. SMA200乖離: 価格がSMA200より上なら減点
-    if (sma200 != null && price != null) {
-      const dev = (price / sma200 - 1) * 100;
-      const v = `${dev >= 0 ? '+' : ''}${dev.toFixed(1)}%`;
-      if      (dev >= +5) push(-2, 'SMA', v, `SMA200比 ${dev.toFixed(1)}% (大きく上 +5%以上)`);
-      else if (dev >  +0.5) push(-1, 'SMA', v, `SMA200比 ${dev.toFixed(1)}% (上)`);
-      else                  push( 0, 'SMA', v, `SMA200比 ${dev.toFixed(1)}% (下 or 接近、ペナルティなし)`);
-    } else push(0, 'SMA', '—', 'SMA200なし');
-    // 3. 週足RSI: 50以上で減点
-    if (rsi == null) push(0, 'RSI週', '—', 'RSI週なし');
+    // 2. 週足RSI: 50以上で減点
+    if (rsi == null) push(0, 'RSI週', '—', 'RSI週計算不能');
     else {
       const v = rsi.toFixed(1);
       if      (rsi >= 70) push(-2, 'RSI週', v, `RSI週 ${v} 買われ過ぎ`);
       else if (rsi >= 50) push(-1, 'RSI週', v, `RSI週 ${v} 強い`);
       else                push( 0, 'RSI週', v, `RSI週 ${v} (50未満、ペナルティなし)`);
     }
-    // 4. ボリンジャーバンド位置: 上限近接以上で減点
+    // 3. ボリンジャーバンド位置: 上限近接以上で減点
     if (bbUpper == null || bbLower == null || price == null) {
-      push(0, 'BB', '—', 'BBなし');
+      push(0, 'BB', '—', 'BB計算不能');
     } else if (price >= bbUpper) {
       push(-2, 'BB', '上限超', `BB上限超え ${Math.round(price)}≥${Math.round(bbUpper)}`);
     } else if (price >= bbUpper * 0.98) {
@@ -2039,130 +2035,43 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     } else {
       push( 0, 'BB', '安全', 'BB上限から離れている (ペナルティなし)');
     }
-    // 5. PER絶対水準: 20以上で減点(赤字も減点)
-    if (per == null || per <= 0) push(-2, 'PER', '—', 'PER赤字/取得不能(リスク)');
-    else {
-      const v = per.toFixed(1);
-      if      (per >= 30) push(-2, 'PER', v, `PER ${v} 超割高(≥30)`);
-      else if (per >= 20) push(-1, 'PER', v, `PER ${v} 高め(≥20)`);
-      else                push( 0, 'PER', v, `PER ${v} (20未満、ペナルティなし)`);
-    }
-    // 6. PBR: 2以上で減点
-    if (pbr == null) push(-1, 'PBR', '—', 'PBR取得不能(リスク)');
-    else {
-      const v = pbr.toFixed(2);
-      if      (pbr >= 4) push(-2, 'PBR', v, `PBR ${v} 超高い(≥4)`);
-      else if (pbr >= 2) push(-1, 'PBR', v, `PBR ${v} 高い(≥2)`);
-      else                push( 0, 'PBR', v, `PBR ${v} (2未満、ペナルティなし)`);
-    }
-    // 7. 配当利回り: 1.5%未満で減点(0.5%未満は強い減点)
-    if (divYield == null)        push(-1, '配当', '—', '配当データなし');
-    else {
-      const v = `${divYield.toFixed(2)}%`;
-      if      (divYield < 0.5)  push(-2, '配当', v, `配当 ${v} 微配/無配`);
-      else if (divYield < 1.5)  push(-1, '配当', v, `配当 ${v} 低い`);
-      else                       push( 0, '配当', v, `配当 ${v} (1.5%以上、ペナルティなし)`);
-    }
-    // 8. PEG ratio(緩和: null/取得不能はペナルティなし)
-    if (peg == null || peg <= 0) push(0, 'PEG', '—', 'PEGなし(緩和でペナルティなし)');
-    else {
-      const v = peg.toFixed(2);
-      if      (peg >= 3) push(-2, 'PEG', v, `PEG ${v} 超高い(≥3)`);
-      else if (peg >= 2) push(-1, 'PEG', v, `PEG ${v} 高い(≥2)`);
-      else                push( 0, 'PEG', v, `PEG ${v} (2未満、ペナルティなし)`);
-    }
-    // 9. 業績成長 (earningsGrowth)
-    if (earningsGrowth == null) push(0, '成長', '—', '業績成長データなし(ペナルティなし)');
-    else {
-      const v = `${(earningsGrowth*100).toFixed(1)}%`;
-      if      (earningsGrowth <= -0.10) push(-2, '成長', v, `業績成長 ${v} 大幅減益(≤-10%)`);
-      else if (earningsGrowth <  0)     push(-1, '成長', v, `業績成長 ${v} 減益`);
-      else                              push( 0, '成長', v, `業績成長 ${v} (プラス、ペナルティなし)`);
-    }
-    // 10. 配当性向 (payoutRatio)
-    if (payoutRatio == null) push(0, '配当性向', '—', '配当性向データなし');
-    else {
-      const v = `${(payoutRatio*100).toFixed(0)}%`;
-      if      (payoutRatio > 1.0) push(-2, '配当性向', v, `配当性向 ${v} 赤字配当(無理な還元)`);
-      else if (payoutRatio > 0.8) push(-1, '配当性向', v, `配当性向 ${v} 高すぎ(余力少)`);
-      else                         push( 0, '配当性向', v, `配当性向 ${v} (持続性OK)`);
-    }
-    // 11. ROE劣化 (avg_roe + roe)
-    {
-      let pen = 0;
-      let detail = '';
-      let valDisp = '';
-      if (avgRoe == null) {
-        pen = -1; detail = 'ROE平均なし(質判定不能)'; valDisp = '—';
-      } else {
-        const apct = avgRoe * 100;
-        valDisp = `${apct.toFixed(1)}%`;
-        if (apct < 5) { pen -= 1; detail += `ROE平均${apct.toFixed(1)}%低い `; }
-        if (roe != null && avgRoe > 0 && roe < avgRoe / 2) {
-          pen -= 1;
-          detail += `現在ROE${(roe*100).toFixed(1)}%大幅劣化`;
-        }
-        if (pen === 0) detail = `ROE平均${apct.toFixed(1)}% (質OK)`;
-      }
-      pen = Math.max(-2, pen); // -2 でクリップ
-      push(pen, 'ROE質', valDisp, detail);
-    }
-
     const score = items.reduce((s, it) => s + it.score, 0);
-    // 減点法: 0が最良、減点が少ないほど良い
     let label, cls;
-    if (score >= -4)       { label = '🟢 割安圏'; cls = 'cheap'; }
-    else if (score <= -13) { label = '🔴 割高圏'; cls = 'expensive'; }
-    else                   { label = '🟡 適正圏'; cls = 'neutral'; }
+    if (score === 0)       { label = '🟢 押し目候補'; cls = 'cheap'; }
+    else if (score >= -2)  { label = '🟡 反発・注意'; cls = 'neutral'; }
+    else                   { label = '🔴 過熱気味'; cls = 'expensive'; }
     return { label, cls, score, items };
   }
-  // ⭐優良マーク: 減点法+質判定のハイブリッド
-  function premiumMark(score, avgRoe, earningsGrowth) {
-    if (score === 0 && avgRoe != null && avgRoe >= 0.12) return '⭐';
-    if (score >= -2 && avgRoe != null && avgRoe >= 0.12
-        && earningsGrowth != null && earningsGrowth >= 0) return '☆';
-    return '';
+  function valuationBadge(price, high52, low52, rsi, bbUpper, bbLower) {
+    const r = valuationLevel(price, high52, low52, rsi, bbUpper, bbLower);
+    const tip = r.items.map(it => `${it.full} (${it.score})`).join('\n') + `\n= 合計 ${r.score}`;
+    return `<span class="vbadge ${r.cls}" title="${escapeHtml(tip)}">${r.label} <small>${r.score}</small></span>`;
   }
-  function valuationBadge(price, high52, low52, sma200, rsi, per, pbr, divYield, peg, bbUpper, bbLower, avgRoe, roe, earningsGrowth, payoutRatio) {
-    const r = valuationLevel(price, high52, low52, sma200, rsi, per, pbr, divYield, peg, bbUpper, bbLower, avgRoe, roe, earningsGrowth, payoutRatio);
-    const tip = r.items.map(it => `${it.full} (${it.score})`).join('\n') + `\n= 合計 ${r.score}(0が満点、減点が少ないほど良い)`;
-    const mark = premiumMark(r.score, avgRoe, earningsGrowth);
-    const markHtml = mark ? ` <span class="premium" title="${mark === '⭐' ? '優良(減点ゼロ+ROE平均≥12%)' : '準優良(減点≤2+ROE平均≥12%+成長プラス)'}">${mark}</span>` : '';
-    return `<span class="vbadge ${r.cls}" title="${escapeHtml(tip)}">${r.label} <small>${r.score}</small></span>${markHtml}`;
-  }
-  // 優待+配当の総合利回り表示
+  // 利回りは参考表示のみ。判定・フィルタ・並び順には使用しない。
   function yieldBlockHtml(s, price, divYield) {
-    const ys = s.yutai_shares, yv = s.yutai_value, yi = s.yutai_item;
-    const hasY = (ys != null && yv != null && ys > 0 && yv > 0);
-    if (!hasY && (divYield == null || divYield <= 0)) {
-      return '<div class="yield-block placeholder">優待詳細未入力 — 編集ボタンから入力で総合利回り表示</div>';
-    }
-    let yutaiYield = null, totalCost = null;
-    if (hasY && price != null && price > 0) {
-      totalCost = price * ys;
-      yutaiYield = (yv / totalCost) * 100;
-    }
-    const dy = (divYield != null && divYield > 0) ? divYield : 0;
-    const ty = (yutaiYield != null ? yutaiYield : 0) + dy;
-    const ytStr = yutaiYield != null ? yutaiYield.toFixed(2) + '%' : '—';
-    const dyStr = (divYield != null && divYield > 0) ? divYield.toFixed(2) + '%' : '—';
-    const tyStr = (ty > 0) ? ty.toFixed(2) + '%' : '—';
-    const totalCostStr = totalCost != null ? Math.round(totalCost).toLocaleString('ja-JP') + '円' : '—';
-    let yutaiLine = '';
-    if (hasY) {
-      yutaiLine = `<div style="font-size:0.85em">優待: <strong>${ys}株</strong>あたり <strong>${yv.toLocaleString('ja-JP')}円</strong>分の <strong>${escapeHtml(yi || '')}</strong> <span style="color:#888">(必要 ${totalCostStr})</span></div>`;
-    }
+    const hasBenefit = s.yutai_shares != null && s.yutai_shares > 0
+      && s.yutai_value != null && s.yutai_value > 0;
+    const benefitYield = hasBenefit && price != null && price > 0
+      ? s.yutai_value / (price * s.yutai_shares) * 100 : null;
+    const hasDividend = divYield != null && divYield >= 0;
+    const totalYield = benefitYield != null && hasDividend ? benefitYield + divYield : null;
+    const benefitText = benefitYield != null ? `${benefitYield.toFixed(2)}%` : '—（未入力）';
+    const dividendText = hasDividend ? `${divYield.toFixed(2)}%` : '—';
+    const totalText = totalYield != null ? `${totalYield.toFixed(2)}%` : '—';
     let cls = 'yield-block';
-    if (ty >= 5) cls += ' high';
-    else if (ty >= 3) cls += ' mid';
+    if (totalYield != null && totalYield >= 5) cls += ' high';
+    else if (totalYield != null && totalYield >= 3) cls += ' mid';
+    const benefitDetail = hasBenefit
+      ? `<div style="font-size:0.78em;color:#777">${s.yutai_shares}株で年${s.yutai_value.toLocaleString('ja-JP')}円相当${s.yutai_item ? `（${escapeHtml(s.yutai_item)}）` : ''}</div>`
+      : '';
     return `<div class="${cls}">
-      ${yutaiLine}
-      <div style="font-weight:bold;font-size:1em">総合利回り <span class="ty-num">${tyStr}</span>
-        <span style="font-weight:normal;font-size:0.82em;color:#666">= 優待 ${ytStr} + 配当 ${dyStr}</span>
-      </div>
+      <div style="font-size:0.78em;color:#777">参考利回り（判定・並び順には不使用）</div>
+      <div><strong>合計 <span class="ty-num">${totalText}</span></strong>
+        <span style="font-size:0.84em;color:#666">＝ 優待 ${benefitText} ＋ 配当 ${dividendText}</span></div>
+      ${benefitDetail}
     </div>`;
   }
-  // 8指標を色付きチップグリッドで表示(0=緑/-1=黄/-2=赤)
+  // 3指標を色付きチップグリッドで表示(0=緑/-1=黄/-2=赤)
   function valuationGridHtml(items) {
     return items.map(it => {
       let cls;
@@ -2178,130 +2087,48 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     }).join('');
   }
 
-  // ===== ルールベース自動判定 (廃止予定 - 互換維持のため残す) =====
-  const JR = {
-    per(v) {
-      if (v == null || v <= 0) return [-1, 'PER取得不能/赤字'];
-      if (v < 12) return [+2, `PER ${v.toFixed(1)}<12 割安`];
-      if (v < 18) return [+1, `PER ${v.toFixed(1)} 適正`];
-      if (v < 25) return [ 0, `PER ${v.toFixed(1)} 普通`];
-      if (v < 35) return [-1, `PER ${v.toFixed(1)} やや高`];
-      if (v < 50) return [-2, `PER ${v.toFixed(1)} 高い`];
-      return [-3, `PER ${v.toFixed(1)}>50 超割高`];
-    },
-    avgRoe(v) {
-      if (v == null) return [0, 'ROE平均なし'];
-      const p = v * 100;
-      if (p >= 15) return [+2, `ROE平均 ${p.toFixed(1)}% 高収益`];
-      if (p >= 8)  return [+1, `ROE平均 ${p.toFixed(1)}% 良好`];
-      if (p >= 5)  return [ 0, `ROE平均 ${p.toFixed(1)}% 普通`];
-      if (p >= 0)  return [-1, `ROE平均 ${p.toFixed(1)}% 低い`];
-      return [-2, `ROE平均 ${p.toFixed(1)}% 構造赤字`];
-    },
-    roeChange(curr, avg) {
-      if (curr == null || avg == null || avg <= 0) return [0, 'ROE比較不能'];
-      if (curr < 0) return [-1, `ROE現在 ${(curr*100).toFixed(1)}% 赤字転落`];
-      const ratio = curr / avg;
-      if (ratio >= 1.0) return [+1, `ROE維持/改善 (${(ratio*100).toFixed(0)}%)`];
-      if (ratio >= 0.5) return [ 0, `ROE低下 (平均の${(ratio*100).toFixed(0)}%)`];
-      return [-1, `ROE大幅低下 (平均の${(ratio*100).toFixed(0)}%)`];
-    },
-    rsi(v) {
-      if (v == null) return [0, 'RSIなし'];
-      if (v <= 30) return [+2, `RSI ${v.toFixed(1)} 売られ過ぎ`];
-      if (v <= 40) return [+1, `RSI ${v.toFixed(1)} 押し目`];
-      if (v < 60)  return [ 0, `RSI ${v.toFixed(1)} 中性`];
-      if (v < 70)  return [-1, `RSI ${v.toFixed(1)} やや過熱`];
-      return [-2, `RSI ${v.toFixed(1)} 買われ過ぎ`];
-    },
-    confidence(c) {
-      if (c === 'high') return [+1, '両指標トリガー(高確度)'];
-      if (c === 'mid')  return [ 0, '片方トリガー(中確度)'];
-      return [-1, '下値基準なし'];
-    },
-  };
-  function computeJudgment(per, roe, avgRoe, rsi, conf) {
-    const items = [
-      JR.per(per), JR.avgRoe(avgRoe), JR.roeChange(roe, avgRoe),
-      JR.rsi(rsi), JR.confidence(conf),
-    ];
-    const score = items.reduce((s, [p]) => s + p, 0);
-    let label;
-    if (score >= 2) label = 'buy';
-    else if (score <= -2) label = 'avoid';
-    else label = 'hold';
-    return { label, score, items };
-  }
-  function judgmentBadgeAuto(s, per, roe, avgRoe, rsi, conf) {
-    if (s.judgment) {
-      return judgmentBadge(s.judgment) + ' <small style="color:#888">(手動)</small>';
-    }
-    const r = computeJudgment(per, roe, avgRoe, rsi, conf);
-    const sign = r.score >= 0 ? '+' : '';
-    const tip = r.items.map(([p, m]) => `${m} (${p >= 0 ? '+' : ''}${p})`).join(' / ') + ` = 合計${sign}${r.score}`;
-    return `<span title="${escapeHtml(tip)}">${judgmentBadge(r.label)} <small>${sign}${r.score}</small></span>`;
-  }
-
   function render() {
     const grid = document.getElementById('grid');
     if (STOCKS.length === 0) {
       grid.innerHTML = '<div class="empty">押し目買いリストに反映中の銘柄がありません。</div>';
       return;
     }
-    // 各銘柄のスコア + 必要額・総合利回り計算
+    // 各銘柄を同じ3指標で判定し、52週レンジ位置を計算
     const enrichedAll = STOCKS.map(s => {
       const p = _prices[s.code];
-      const val = valuationLevel(p, _high52s[s.code], _low52s[s.code], _sma200s[s.code], _rsis[s.code], _pers[s.code], _pbrs[s.code], _divYields[s.code], _pegs[s.code], _bbUppers[s.code], _bbLowers[s.code], _avgRoes[s.code], _roes[s.code], _earningsGrowths[s.code], _payoutRatios[s.code]);
-      // 必要額: yutai_shares 入力済ならそれ × 価格、それ以外は min_shares × 価格
-      const reqShares = (s.yutai_shares != null && s.yutai_shares > 0) ? s.yutai_shares : s.min_shares;
-      const reqCost = (p != null && reqShares) ? p * reqShares : null;
-      // 総合利回り: 優待入力済なら計算、配当だけでも合算
-      let totalYield = null;
-      const dy = (_divYields[s.code] != null && _divYields[s.code] > 0) ? _divYields[s.code] : 0;
-      if (s.yutai_shares != null && s.yutai_value != null && p != null && p > 0) {
-        const yy = (s.yutai_value / (p * s.yutai_shares)) * 100;
-        totalYield = yy + dy;
-      } else if (dy > 0) {
-        totalYield = dy;
-      }
-      return { s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, reqCost, totalYield };
+      const high52 = _high52s[s.code], low52 = _low52s[s.code];
+      const rangePos = (high52 != null && low52 != null && high52 > low52 && p != null)
+        ? (p - low52) / (high52 - low52) * 100 : null;
+      const val = valuationLevel(p, high52, low52, _rsis[s.code], _bbUppers[s.code], _bbLowers[s.code]);
+      return { s, p, valScore: val.score, valCls: val.cls, valLabel: val.label, rangePos };
     });
 
-    // フィルタ適用
-    const fCostMax = parseFloat(document.getElementById('f-cost-max').value);
-    const fYieldMin = parseFloat(document.getElementById('f-yield-min').value);
+    // 52週レンジ位置フィルタを適用
     const fRangePosMax = parseFloat(document.getElementById('f-rangepos-max').value);
     let hidden = 0;
     const enriched = enrichedAll.filter(e => {
-      if (!isNaN(fCostMax) && e.reqCost != null && e.reqCost > fCostMax * 10000) { hidden++; return false; }
-      // 総合利回りフィルタ: 優待未入力(yutai_shares/value が null)の銘柄は除外しない
-      const yutaiEntered = (e.s.yutai_shares != null && e.s.yutai_value != null);
-      if (!isNaN(fYieldMin) && yutaiEntered && (e.totalYield == null || e.totalYield < fYieldMin)) {
+      if (!isNaN(fRangePosMax) && e.rangePos != null && e.rangePos > fRangePosMax) {
         hidden++; return false;
-      }
-      // 52週レンジ位置フィルタ: データなし(high == low等)は除外しない
-      if (!isNaN(fRangePosMax)) {
-        const h = _high52s[e.s.code], l = _low52s[e.s.code];
-        if (h != null && l != null && h > l && e.p != null) {
-          const pos = (e.p - l) / (h - l) * 100;
-          if (pos > fRangePosMax) { hidden++; return false; }
-        }
       }
       return true;
     });
 
-    // 割安度でグルーピング (cheap → neutral → expensive)
+    // 過熱サインの少なさでグルーピング
     const groups = { cheap: [], neutral: [], expensive: [] };
     for (const e of enriched) groups[e.valCls].push(e);
-    // 各グループ内でスコア降順 (減点が少ないほど上)
-    for (const k of Object.keys(groups)) groups[k].sort((a, b) => b.valScore - a.valScore);
+    // 同スコアなら、投資方針に合わせて52週レンジ位置が低い順
+    for (const k of Object.keys(groups)) {
+      groups[k].sort((a, b) =>
+        b.valScore - a.valScore || (a.rangePos ?? Infinity) - (b.rangePos ?? Infinity)
+      );
+    }
 
     grid.innerHTML = '';
 
     const sectionMeta = [
-      { key: 'cheap',     icon: '🟢', label: '割安圏', desc: '減点 4点以下(スコア ≥ -4)、欠点が少ない上位候補。⭐は減点ゼロ+ROE平均≥12%、☆は減点≤2+ROE平均≥12%+業績成長プラス' },
-      { key: 'neutral',   icon: '🟡', label: '適正圏', desc: '減点 5〜12点(スコア -5 〜 -12)' },
-      { key: 'expensive', icon: '🔴', label: '割高圏', desc: '減点 13点以上(スコア ≤ -13)、複数指標で割高シグナル' },
+      { key: 'cheap',     icon: '🟢', label: '押し目候補', desc: '3指標で過熱サインなし。52週レンジ位置が低い順' },
+      { key: 'neutral',   icon: '🟡', label: '反発・注意', desc: '52週レンジ・週足RSI・BBのどれかに軽い過熱サイン' },
+      { key: 'expensive', icon: '🔴', label: '過熱気味', desc: '3指標に複数または強い過熱サイン' },
     ];
 
     sectionMeta.forEach(meta => {
@@ -2317,15 +2144,14 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
       list.forEach(({ s, p }) => {
         const badgeMkt = s.market === 'プライム' ? 'badge-prime' : 'badge-standard';
-        const per = _pers[s.code], roe = _roes[s.code], avgRoe = _avgRoes[s.code], rsi = _rsis[s.code];
-        const sma = _sma200s[s.code];
+        const rsi = _rsis[s.code];
         const card = document.createElement('div');
         card.className = 'card';
         card.innerHTML = `
           <div class="card-head">
             <span class="code">${s.code}</span>
             <span class="badge ${badgeMkt}">${s.market}</span>
-            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], sma, rsi, _pers[s.code], _pbrs[s.code], _divYields[s.code], _pegs[s.code], _bbUppers[s.code], _bbLowers[s.code], _avgRoes[s.code], _roes[s.code], _earningsGrowths[s.code], _payoutRatios[s.code])}
+            ${valuationBadge(p, _high52s[s.code], _low52s[s.code], rsi, _bbUppers[s.code], _bbLowers[s.code])}
             <span class="name">${escapeHtml(s.name)}</span>
             <button class="star-btn" data-code="${s.code}" title="★解除">★</button>
           </div>
@@ -2343,14 +2169,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
                 ${upLow != null ? `<span style="font-size:0.78em;color:#888">/ 安値 ${fmt(l)}円 +${upLow.toFixed(1)}%</span>` : ''}`;
             })()}
           </div>
-          <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], sma, rsi, _pers[s.code], _pbrs[s.code], _divYields[s.code], _pegs[s.code], _bbUppers[s.code], _bbLowers[s.code], _avgRoes[s.code], _roes[s.code], _earningsGrowths[s.code], _payoutRatios[s.code]).items)}</div>
-          <div class="metrics">
-            <span>PER ${per && per > 0 ? per.toFixed(1) + '倍' : '—'}</span>
-            <span>ROE ${roe != null ? (roe*100).toFixed(1) + '%' : '—'}</span>
-            <span>ROE平均 ${avgRoe != null ? (avgRoe*100).toFixed(1) + '%' : '—'}</span>
-            <span>RSI週 ${rsi != null ? rsi.toFixed(1) : '—'}</span>
-            <span>自己資本比率 ${_equityRatios[s.code] != null ? (_equityRatios[s.code]*100).toFixed(0) + '%' : '—'}</span>
-          </div>
+          <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
           ${yieldBlockHtml(s, p, _divYields[s.code])}
           <div class="actions">
             <a href="https://finance.yahoo.co.jp/quote/${s.code}.T" target="_blank" rel="noopener">Y!</a>
@@ -2365,10 +2184,10 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       ? ` <span style="color:#d35400">(条件で <strong>${hidden}</strong> 件非表示)</span>` : '';
     document.getElementById('summary').innerHTML =
       `<strong>${enriched.length} / ${STOCKS.length} 銘柄表示中</strong>${filterNote}:
-      🟢 割安圏 <strong style="color:#27ae60">${groups.cheap.length}</strong> /
-      🟡 適正圏 <strong style="color:#7f8c8d">${groups.neutral.length}</strong> /
-      🔴 割高圏 <strong style="color:#c0392b">${groups.expensive.length}</strong><br>
-      <span style="font-size:0.85em;color:#666">並び順: 割安スコアが高い順(減点が少ない=上位)</span>`;
+      🟢 押し目候補 <strong style="color:#27ae60">${groups.cheap.length}</strong> /
+      🟡 反発・注意 <strong style="color:#7f8c8d">${groups.neutral.length}</strong> /
+      🔴 過熱気味 <strong style="color:#c0392b">${groups.expensive.length}</strong><br>
+      <span style="font-size:0.85em;color:#666">並び順: 過熱サインが少ない順 → 52週レンジ位置が低い順。利回りは参考表示のみ</span>`;
   }
 
   async function refreshPrices() {
@@ -2380,22 +2199,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       const res = await fetch('/api/prices');
       const data = await res.json();
       _prices = data.prices || {};
-      _pers = data.pers || {};
-      _roes = data.roes || {};
-      _avgRoes = data.avg_roes || {};
       _rsis = data.rsis || {};
-      _sma200s = data.sma200s || {};
-      _rsi30s = data.rsi30_prices || {};
       _high52s = data.high52s || {};
       _low52s = data.low52s || {};
       _bbUppers = data.bb_uppers || {};
       _bbLowers = data.bb_lowers || {};
-      _pbrs = data.pbrs || {};
       _divYields = data.div_yields || {};
-      _pegs = data.pegs || {};
-      _earningsGrowths = data.earnings_growths || {};
-      _payoutRatios = data.payout_ratios || {};
-      _equityRatios = data.equity_ratios || {};
       render();
       status.textContent = `最終更新: ${data.fetched_at}`;
     } catch (e) {
@@ -2483,12 +2292,10 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   });
 
   // フィルタ入力イベント (rerenderのみ、API再取得不要)
-  ['f-cost-max', 'f-yield-min', 'f-rangepos-max'].forEach(id => {
+  ['f-rangepos-max'].forEach(id => {
     document.getElementById(id).addEventListener('input', render);
   });
   document.getElementById('f-clear').addEventListener('click', () => {
-    document.getElementById('f-cost-max').value = '';
-    document.getElementById('f-yield-min').value = '';
     document.getElementById('f-rangepos-max').value = '';
     render();
   });

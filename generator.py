@@ -23,7 +23,7 @@ import app
 from app import (
     load_stocks,
     fetch_prices_and_rsi,
-    fetch_metrics,
+    fetch_dividend_yields,
     WATCHLIST_HTML,
 )
 
@@ -75,30 +75,19 @@ def main() -> None:
 
     # データ取得
     print("yfinance データ取得中… (1〜3分)")
-    prices, rsis, sma200s, rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
-    metrics = fetch_metrics()
+    prices, rsis, _sma200s, _rsi30s, high52s, low52s, bb_uppers, bb_lowers = fetch_prices_and_rsi()
+    div_yields = fetch_dividend_yields()
     ok_p = sum(1 for v in prices.values() if v)
     print(f"  株価取得: {ok_p}/{len(starred)} 件成功")
 
     embedded = {
         "prices": prices,
-        "roes": {c: m["roe"] for c, m in metrics.items()},
-        "pers": {c: m["per"] for c, m in metrics.items()},
-        "avg_roes": {c: m["avg_roe"] for c, m in metrics.items()},
-        "pbrs": {c: m["pbr"] for c, m in metrics.items()},
-        "div_yields": {c: m["div_yield"] for c, m in metrics.items()},
-        "pegs": {c: m["peg"] for c, m in metrics.items()},
-        "earnings_growths": {c: m["earnings_growth"] for c, m in metrics.items()},
-        "payout_ratios": {c: m["payout_ratio"] for c, m in metrics.items()},
-        "equity_ratios": {c: m["equity_ratio"] for c, m in metrics.items()},
         "rsis": rsis,
-        "sma200s": sma200s,
-        "rsi30_prices": rsi30s,
         "high52s": high52s,
         "low52s": low52s,
         "bb_uppers": bb_uppers,
         "bb_lowers": bb_lowers,
-        "verified": {s["code"]: s.get("last_verified") for s in starred},
+        "div_yields": div_yields,
         "fetched_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
     }
 
