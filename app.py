@@ -1677,6 +1677,36 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     font-size: 1.4em;
   }
   h1 a { font-size: 0.6em; margin-left: 1em; color: #2980b9; text-decoration: none; }
+  .view-tabs {
+    display: flex; gap: 0.4em; margin: 0 0 1em;
+    border-bottom: 2px solid #ddd;
+  }
+  .view-tab {
+    appearance: none; background: #ecf0f1; color: #555;
+    border: 1px solid #ddd; border-bottom: none;
+    border-radius: 6px 6px 0 0; padding: 0.55em 1.2em;
+    font: inherit; font-weight: bold; cursor: pointer;
+  }
+  .view-tab:hover { background: #f8e9e7; color: #922b21; }
+  .view-tab.active { background: #c0392b; color: #fff; border-color: #c0392b; }
+  .view-panel[hidden] { display: none; }
+  .stock-list-summary {
+    margin: 0 0 0.8em; color: #555; font-size: 0.92em;
+  }
+  .stock-table-wrap {
+    overflow-x: auto; background: #fff; border: 1px solid #ddd;
+    border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .stock-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+  .stock-table th, .stock-table td {
+    padding: 0.65em 0.8em; border-bottom: 1px solid #eee; text-align: left;
+  }
+  .stock-table th { background: #f4ebe9; white-space: nowrap; color: #5d2b26; }
+  .stock-table tbody tr:last-child td { border-bottom: none; }
+  .stock-table tbody tr:hover { background: #fff8f7; }
+  .stock-table .num { width: 3em; text-align: right; color: #888; }
+  .stock-table .code { font-family: "SF Mono", Menlo, monospace; white-space: nowrap; }
+  .stock-table .name { font-weight: bold; min-width: 12em; }
   .topbar {
     position: sticky; top: 0; background: #fafafa; z-index: 10;
     padding: 0.6em 0; border-bottom: 1px solid #eee;
@@ -1835,6 +1865,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
 <h1>★ 押し目買いウォッチリスト</h1>
 
+<div class="view-tabs" role="tablist" aria-label="表示切り替え">
+  <button type="button" class="view-tab active" id="tab-watchlist" role="tab" aria-selected="true" aria-controls="watchlist-view" data-view="watchlist-view">押し目買いリスト</button>
+  <button type="button" class="view-tab" id="tab-stock-list" role="tab" aria-selected="false" aria-controls="stock-list-view" data-view="stock-list-view">銘柄一覧 <span id="stock-tab-count"></span></button>
+</div>
+
+<section id="watchlist-view" class="view-panel" role="tabpanel" aria-labelledby="tab-watchlist">
 <div class="topbar">
   <button id="refresh">価格を更新</button>
   <span id="status">起動時に自動取得します…</span>
@@ -1865,6 +1901,26 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 </div>
 
 <div id="grid" class="grid"></div>
+</section>
+
+<section id="stock-list-view" class="view-panel" role="tabpanel" aria-labelledby="tab-stock-list" hidden>
+  <p class="stock-list-summary" id="stock-list-summary"></p>
+  <div class="stock-table-wrap">
+    <table class="stock-table">
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th>コード</th>
+          <th>銘柄名</th>
+          <th>市場</th>
+          <th>カテゴリ</th>
+          <th>分類</th>
+        </tr>
+      </thead>
+      <tbody id="stock-list-body"></tbody>
+    </table>
+  </div>
+</section>
 
 <!-- 編集モーダル -->
 <div id="analysis-modal" class="modal-bg">
@@ -1912,6 +1968,36 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     return `<span class="jbadge ${j}">${labels[j] || j}</span>`;
   }
   function fmt(n, suf='') { return n == null ? '—' : Math.round(n).toLocaleString('ja-JP') + suf; }
+
+  function renderStockList() {
+    const sorted = [...STOCKS].sort((a, b) =>
+      String(a.code).localeCompare(String(b.code), 'ja', { numeric: true })
+    );
+    document.getElementById('stock-tab-count').textContent = `(${STOCKS.length})`;
+    document.getElementById('stock-list-summary').innerHTML =
+      `<strong>${STOCKS.length}銘柄</strong>が押し目買いリストに反映されています。`;
+    document.getElementById('stock-list-body').innerHTML = sorted.map((s, index) => `
+      <tr>
+        <td class="num">${index + 1}</td>
+        <td class="code">${escapeHtml(s.code)}</td>
+        <td class="name">${escapeHtml(s.name)}</td>
+        <td>${escapeHtml(s.market || '—')}</td>
+        <td>${escapeHtml(s.cat || '—')}</td>
+        <td>${escapeHtml(s.sub || '—')}</td>
+      </tr>
+    `).join('');
+  }
+
+  function switchView(viewId) {
+    document.querySelectorAll('.view-tab').forEach(tab => {
+      const active = tab.dataset.view === viewId;
+      tab.classList.toggle('active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('.view-panel').forEach(panel => {
+      panel.hidden = panel.id !== viewId;
+    });
+  }
 
   // ===== 割安度判定 (11指標、減点法) =====
   // 「割高 / 過熱 / リスク」サインがあれば減点(-1 または -2)、それ以外は 0。
@@ -2159,7 +2245,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   function render() {
     const grid = document.getElementById('grid');
     if (STOCKS.length === 0) {
-      grid.innerHTML = '<div class="empty">★を付けた銘柄がありません。<br><a href="/">全銘柄一覧</a> で気になる銘柄に★を付けてください。</div>';
+      grid.innerHTML = '<div class="empty">押し目買いリストに反映中の銘柄がありません。</div>';
       return;
     }
     // 各銘柄のスコア + 必要額・総合利回り計算
@@ -2375,6 +2461,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       await fetch('/api/star/' + code, { method: 'POST' });
       const idx = STOCKS.findIndex(s => s.code === code);
       if (idx >= 0) STOCKS.splice(idx, 1);
+      renderStockList();
       render();
     } catch (e) { alert('解除失敗: ' + e.message); }
   }
@@ -2391,6 +2478,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     if (star) { unstar(star.dataset.code); return; }
   });
   document.getElementById('refresh').addEventListener('click', refreshPrices);
+  document.querySelectorAll('.view-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchView(tab.dataset.view));
+  });
 
   // フィルタ入力イベント (rerenderのみ、API再取得不要)
   ['f-cost-max', 'f-yield-min', 'f-rangepos-max'].forEach(id => {
@@ -2403,6 +2493,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     render();
   });
 
+  renderStockList();
   refreshPrices();
 </script>
 
