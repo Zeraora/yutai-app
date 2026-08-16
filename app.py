@@ -2074,7 +2074,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 </div>
 
 <div class="summary" id="summary">
-  <strong>判定方式: 全39銘柄を同じ株価履歴から計算できる3指標</strong><br>
+  <strong>判定方式: 全<span id="watchlist-total"></span>銘柄を同じ株価履歴から計算できる3指標</strong><br>
   <span style="font-size:0.85em">
   52週レンジ・週足RSI・ボリンジャーバンドのみ。3年前比・長期比・利回りは参考表示。ただし3年比と長期比が両方−3%未満の銘柄は最下部の長期低迷枠へ分離。<br>
   RSIは現在値と14SMAを別ブロック表示。オレンジ = RSIが14SMAより上 / 青 = 下（比較自体は判定外）。<br>
@@ -2155,6 +2155,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       String(a.code).localeCompare(String(b.code), 'ja', { numeric: true })
     );
     document.getElementById('stock-tab-count').textContent = `(${STOCKS.length})`;
+    document.getElementById('watchlist-total').textContent = STOCKS.length;
     document.getElementById('stock-list-summary').innerHTML =
       `<strong>${STOCKS.length}銘柄</strong>が押し目買いリストに反映されています。`;
     document.getElementById('stock-list-body').innerHTML = sorted.map((s, index) => `
@@ -2180,7 +2181,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     });
   }
 
-  // ===== 全39銘柄で同じ条件になる株価指標 (3指標、減点法) =====
+  // ===== 全銘柄で同じ条件になる株価指標 (3指標、減点法) =====
   // 同じ株価履歴から計算した「52週レンジ・週足RSI・BB」の過熱サインだけを減点する。
   function valuationLevel(price, high52, low52, rsi, rsiSma14, bbUpper, bbLower) {
     const items = [];
