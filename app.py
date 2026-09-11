@@ -15,13 +15,15 @@ import math
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import yfinance as yf
 from flask import Flask, Response, jsonify, redirect, render_template_string, request
+
+from benchmark import BENCHMARK_SYMBOL, compare_total_returns
 
 app = Flask(__name__)
 JST = ZoneInfo("Asia/Tokyo")
@@ -283,9 +285,12 @@ def fetch_prices_and_rsi() -> tuple[
     dict[str, float | None],
     dict[str, str | None],
     dict[str, float | None],
+    dict[str, Any],
 ]:
     """価格 / RSI / 52週高安 / BB / 3年前比較などを一括取得。"""
-    symbols = [f"{s['code']}.T" for s in STOCKS]
+    symbols = list(dict.fromkeys([f"{s['code']}.T" for s in STOCKS] + [BENCHMARK_SYMBOL]))
+    total_return_histories = {}
+    benchmark_close = None
     prices: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     rsis: dict[str, float | None] = {s["code"]: None for s in STOCKS}
     rsi_sma14s: dict[str, float | None] = {s["code"]: None for s in STOCKS}
@@ -304,6 +309,7 @@ def fetch_prices_and_rsi() -> tuple[
 
     def _populate(code: str, close, price_only_close=None):
         if close is None or len(close) == 0: return
+        total_return_histories[code] = close.copy()
         # 既存3指標は従来どおり直近約1年だけで計算する。
         # 長期履歴全体を混ぜると、古い異常値やRSI初期値が結果を変えるため。
         close = _remove_extreme_price_outliers(code, close.tail(260))
@@ -343,6 +349,10 @@ def fetch_prices_and_rsi() -> tuple[
         data = None
 
     if data is not None:
+        try:
+            benchmark_close = data[BENCHMARK_SYMBOL]["Adj Close"].dropna()
+        except (KeyError, ValueError, AttributeError):
+            pass
         for s in STOCKS:
             sym = f"{s['code']}.T"
             try:
@@ -362,11 +372,30 @@ def fetch_prices_and_rsi() -> tuple[
         except Exception as e:
             app.logger.warning(f"individual fetch failed for {code}: {e}")
 
+    if benchmark_close is None or benchmark_close.empty:
+        try:
+            benchmark_close = yf.Ticker(BENCHMARK_SYMBOL).history(
+                start=history_start, auto_adjust=False,
+            )["Adj Close"]
+        except Exception as e:
+            app.logger.warning("benchmark fetch failed: %s", e)
+    # 当日の取引時間中は前日まで。終値同士で比較する。
+    now = datetime.now(JST)
+    as_of = now.date() if (now.hour, now.minute) >= (15, 30) else now.date() - timedelta(days=1)
+    topix_comparisons = {
+        s["code"]: compare_total_returns(
+            total_return_histories.get(s["code"]), benchmark_close,
+            as_of=as_of, relisted_date=RELISTED_DATES.get(s["code"]),
+        )
+        for s in STOCKS
+    }
+
     return (
         prices, rsis, rsi_sma14s, sma200s, rsi30s,
         high52s, low52s, bb_uppers, bb_lowers,
         price3y_refs, price3y_changes,
         long_refs, long_changes, long_labels, long_years,
+        topix_comparisons,
     )
 
 
@@ -498,6 +527,7 @@ def api_prices():
         high52s, low52s, bb_uppers, bb_lowers,
         price3y_refs, price3y_changes,
         long_refs, long_changes, long_labels, long_years,
+        topix_comparisons,
     ) = fetch_prices_and_rsi()
     metrics = fetch_metrics()
     roes = {code: m["roe"] for code, m in metrics.items()}
@@ -529,6 +559,7 @@ def api_prices():
         "long_changes": long_changes,
         "long_labels": long_labels,
         "long_years": long_years,
+        "topix_comparisons": topix_comparisons,
         "pbrs": pbrs,
         "div_yields": div_yields,
         "pegs": pegs,
@@ -1832,6 +1863,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <title>押し目買いウォッチリスト ★</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body {
     font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
@@ -2054,6 +2086,38 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .comparison-block.long-slump { background: #eaecee; border-left-color: #34495e; color: #2c3e50; }
   .comparison-block.long-weak { background: #fef5e7; border-left-color: #e67e22; color: #935116; }
   .comparison-block.recovery-watch { background: #f4ecf7; border-left-color: #8e44ad; color: #6c3483; }
+  .benchmark-intro { max-width: 850px; margin: 1em 0; }
+  .benchmark-intro h2 { margin: 0 0 0.4em; font-size: 1.2em; }
+  .benchmark-intro p { margin: 0.4em 0; color: #555; font-size: 0.9em; }
+  .benchmark-controls { display: flex; flex-wrap: wrap; gap: 1em; margin: 1em 0; font-size: 0.9em; }
+  .benchmark-controls select { font: inherit; padding: 0.4em; border: 1px solid #bbb; border-radius: 4px; background: white; }
+  .benchmark-table { min-width: 840px; }
+  .benchmark-table th { background: #eaf1f6; color: #25455e; }
+  .benchmark-table .name { width: 16%; min-width: 120px; max-width: 220px; white-space: normal; }
+  .benchmark-table th:first-child { position: sticky; left: 0; z-index: 1; }
+  .benchmark-scroll-hint { display: none; }
+  .benchmark-cell { min-width: 190px; }
+  .benchmark-cell .return-line { display: flex; justify-content: space-between; gap: 0.7em; font-variant-numeric: tabular-nums; }
+  .benchmark-cell .return-line small { color: #666; }
+  .benchmark-gap { display: inline-block; font-weight: bold; padding: 2px 6px; border-radius: 3px; margin-top: 0.4em; }
+  .benchmark-win { color: #146348; background: #e5f4ed; }
+  .benchmark-lose { color: #963c32; background: #fbece9; }
+  .benchmark-flat { color: #555; background: #eef0f1; }
+  .benchmark-date, .benchmark-missing { color: #6c7278; font-size: 0.8em; }
+  .benchmark-date { display: block; margin-top: 0.4em; }
+  .benchmark-method { margin: 1em 0; font-size: 0.85em; color: #555; }
+  .benchmark-method summary { cursor: pointer; font-weight: bold; }
+  .benchmark-card { background: #f4f8fb; border: 1px solid #dce7ee; padding: 0.6em; border-radius: 5px; font-size: 0.8em; }
+  .benchmark-card strong { color: #25455e; }
+  .benchmark-card-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4em; margin-top: 0.25em; }
+  .benchmark-card-row .benchmark-gap { margin: 0; }
+  @media (max-width: 600px) {
+    body { padding: 0 0.7em; }
+    .view-tab { padding: 0.55em 0.65em; font-size: 0.9em; }
+    .subgrid { grid-template-columns: minmax(0, 1fr); }
+    .benchmark-controls label { display: flex; flex-direction: column; gap: 0.3em; }
+    .benchmark-scroll-hint { display: block; font-size: 0.8em; color: #666; }
+  }
 </style>
 </head>
 <body>
@@ -2062,6 +2126,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
 <div class="view-tabs" role="tablist" aria-label="表示切り替え">
   <button type="button" class="view-tab active" id="tab-watchlist" role="tab" aria-selected="true" aria-controls="watchlist-view" data-view="watchlist-view">押し目買いリスト</button>
+  <button type="button" class="view-tab" id="tab-topix" role="tab" aria-selected="false" aria-controls="topix-view" data-view="topix-view">TOPIX比較</button>
   <button type="button" class="view-tab" id="tab-stock-list" role="tab" aria-selected="false" aria-controls="stock-list-view" data-view="stock-list-view">銘柄一覧 <span id="stock-tab-count"></span></button>
 </div>
 
@@ -2074,6 +2139,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="30" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
+  <label style="font-size:0.85em"><input type="checkbox" id="f-topix-only">5年・10年ともTOPIX（ETF）を上回る銘柄のみ</label>
 </div>
 
 <div class="summary" id="summary">
@@ -2089,6 +2155,43 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 </div>
 
 <div id="grid" class="grid"></div>
+</section>
+
+<section id="topix-view" class="view-panel" role="tabpanel" aria-labelledby="tab-topix" hidden>
+  <div class="benchmark-intro">
+    <h2>市場全体を上回る成長だったか</h2>
+    <p>3年・5年・10年の配当再投資込みリターンを、同じ期間で比較。長期投資では5年と10年を中心に、3年は最近の変化を見るために使えます。</p>
+    <p><strong>比較対象はTOPIX連動ETF（1305）です。</strong>分配金再投資を近似した値で、配当込みTOPIX指数そのものではありません。優待価値・税金・売買手数料は含みません。</p>
+  </div>
+  <div class="benchmark-controls">
+    <label>表示対象 <select id="topix-filter">
+      <option value="all">全銘柄</option>
+      <option value="win">5年・10年とも上回る</option>
+      <option value="lose">5年・10年とも下回る</option>
+      <option value="missing">5年または10年が比較不能</option>
+    </select></label>
+    <label>差が大きい順 <select id="topix-sort">
+      <option value="10">10年の差</option>
+      <option value="5">5年の差</option>
+      <option value="3">3年の差</option>
+    </select></label>
+  </div>
+  <p class="stock-list-summary" id="topix-summary" aria-live="polite">比較データを取得中…</p>
+  <p class="benchmark-scroll-hint">表を横にスクロールすると5年・10年も確認できます →</p>
+  <div class="stock-table-wrap" tabindex="0" role="region" aria-label="TOPIX長期比較表。横にスクロールできます">
+    <table class="stock-table benchmark-table">
+      <thead><tr><th scope="col">銘柄</th><th scope="col">3年</th><th scope="col">5年</th><th scope="col">10年</th></tr></thead>
+      <tbody id="topix-body"></tbody>
+    </table>
+  </div>
+  <details class="benchmark-method">
+    <summary>比較の読み方・計算方法</summary>
+    <p>「差」は銘柄の累積リターン − ETFの累積リターン（ポイント）。例：銘柄＋80%、ETF＋50%なら＋30ポイントです。「年率」は複利で年平均に換算したリターン（CAGR）です。</p>
+    <p>双方の株式分割・配当調整済み終値から、税引前の配当・分配金再投資リターンを近似します。ETF側には信託報酬などの運用費用と市場価格の乖離が反映されるため、指数とは差が生じます。現在の配当利回りを過去年数分足す計算はしません。</p>
+    <p>始点は3・5・10年前の同日以前に両者の価格がある直近の取引日、終点は両者共通の確定日足。同じ日付で比較し、各欄に期間を表示します。従来の「3年比・10年前比」は配当を除いた株価の20日平均基準なので、この比較とは異なります。</p>
+    <p>上場・再上場から必要な年数がない場合や、同じ日付のデータが揃わない場合は「比較不能」。勝ち負けの判定や絞り込みに含めません。過去の上回り・下回りは今後のリターンを保証しません。</p>
+    <p>出典：<a href="https://www.daiwa-am.co.jp/etf/funds/5841/" target="_blank" rel="noopener">iFreeETF TOPIX（1305）商品情報</a> ／ 価格履歴：Yahoo Finance</p>
+  </details>
 </section>
 
 <section id="stock-list-view" class="view-panel" role="tabpanel" aria-labelledby="tab-stock-list" hidden>
@@ -2145,6 +2248,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   let _bbUppers = {}, _bbLowers = {};
   let _price3yRefs = {}, _price3yChanges = {};
   let _longRefs = {}, _longChanges = {}, _longLabels = {}, _longYears = {};
+  let _topixComparisons = {};
+  let _topixLoaded = false;
   let _divYields = {};
 
   function escapeHtml(s) {
@@ -2182,6 +2287,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     document.querySelectorAll('.view-panel').forEach(panel => {
       panel.hidden = panel.id !== viewId;
     });
+    const hash = viewId === 'topix-view' ? '#topix' : viewId === 'stock-list-view' ? '#stocks' : '#watchlist';
+    history.replaceState(null, '', hash);
   }
 
   // ===== 全銘柄で同じ条件になる株価指標 (3指標、減点法) =====
@@ -2275,6 +2382,73 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const signed = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%`;
     return `<span class="comparison-change ${cls}">${arrow} ${signed}</span>`;
   }
+  function topixPeriod(code, years) {
+    const p = _topixComparisons[code]?.[String(years)];
+    return p?.available && ['stock_return', 'benchmark_return', 'excess_pp', 'stock_cagr', 'benchmark_cagr'].every(key => Number.isFinite(p[key])) ? p : null;
+  }
+  function topixLongResult(code) {
+    const five = topixPeriod(code, 5), ten = topixPeriod(code, 10);
+    if (!five || !ten) return 'missing';
+    if (five.excess_pp > 0 && ten.excess_pp > 0) return 'win';
+    if (five.excess_pp < 0 && ten.excess_pp < 0) return 'lose';
+    return 'mixed';
+  }
+  function signedReturn(value, unit = '%') {
+    return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}${unit}`;
+  }
+  function topixGapHtml(p) {
+    const cls = p.excess_pp > 0 ? 'win' : p.excess_pp < 0 ? 'lose' : 'flat';
+    const label = p.excess_pp > 0 ? '上回る' : p.excess_pp < 0 ? '下回る' : '同水準';
+    const difference = Math.abs(p.excess_pp) < 0.1 && p.excess_pp !== 0
+      ? `${p.excess_pp > 0 ? '+' : '−'}0.1pt未満` : signedReturn(p.excess_pp, 'pt');
+    return `<span class="benchmark-gap benchmark-${cls}">${difference} ${label}</span>`;
+  }
+  function topixCellHtml(code, years) {
+    const p = topixPeriod(code, years);
+    if (!p) {
+      const reason = _topixComparisons[code]?.[String(years)]?.reason || (_topixLoaded ? 'データがありません' : '取得中…');
+      return `<td class="benchmark-cell"><span class="benchmark-missing">比較不能<br>${escapeHtml(reason)}</span></td>`;
+    }
+    return `<td class="benchmark-cell">
+      <div class="return-line"><span>銘柄</span><strong>${signedReturn(p.stock_return)}</strong></div>
+      <div class="return-line"><small>年率</small><small>${signedReturn(p.stock_cagr)}</small></div>
+      <div class="return-line"><span>TOPIX（ETF）</span><span>${signedReturn(p.benchmark_return)}</span></div>
+      <div class="return-line"><small>年率</small><small>${signedReturn(p.benchmark_cagr)}</small></div>
+      ${topixGapHtml(p)}
+      <small class="benchmark-date">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</small>
+    </td>`;
+  }
+  function renderTopix() {
+    const filter = document.getElementById('topix-filter').value;
+    const years = document.getElementById('topix-sort').value;
+    const rows = STOCKS.filter(s => filter === 'all' || topixLongResult(s.code) === filter);
+    rows.sort((a, b) => {
+      const pa = topixPeriod(a.code, years), pb = topixPeriod(b.code, years);
+      if (!pa && pb) return 1;
+      if (pa && !pb) return -1;
+      return (pa && pb ? pb.excess_pp - pa.excess_pp : 0) || String(a.code).localeCompare(String(b.code));
+    });
+    const counts = { win: 0, lose: 0, mixed: 0, missing: 0 };
+    STOCKS.forEach(s => counts[topixLongResult(s.code)]++);
+    document.getElementById('topix-summary').textContent = _topixLoaded
+      ? `${rows.length} / ${STOCKS.length}銘柄表示 ｜ 全体：5年・10年とも上回る ${counts.win}、ともに下回る ${counts.lose}、期間で結果が異なる・同水準 ${counts.mixed}、比較不能 ${counts.missing}`
+      : '比較データを取得中…';
+    document.getElementById('topix-body').innerHTML = rows.length ? rows.map(s => `<tr>
+      <th scope="row" class="name"><small>${escapeHtml(s.code)}</small><br>${escapeHtml(s.name)}</th>
+      ${[3, 5, 10].map(year => topixCellHtml(s.code, year)).join('')}
+    </tr>`).join('') : '<tr><td colspan="4" class="empty">この条件に該当する銘柄はありません。</td></tr>';
+  }
+  function topixCardHtml(code) {
+    return `<div class="benchmark-card"><strong>配当込み・TOPIX連動ETFとの差</strong>
+      ${[5, 10].map(years => {
+        const p = topixPeriod(code, years);
+        return `<div class="benchmark-card-row"><span>${years}年</span>${p
+          ? `${topixGapHtml(p)}<span>銘柄 ${signedReturn(p.stock_return)} / ETF ${signedReturn(p.benchmark_return)}</span>`
+          : '<span class="benchmark-missing">比較不能（履歴不足・未取得）</span>'}</div>`;
+      }).join('')}
+      <small>配当再投資の近似値・優待価値は含まず</small>
+    </div>`;
+  }
   function comparisonPeriodLabel(label, years) {
     if (!label) return '長期比';
     if (label === '10年前比' || years == null) return label;
@@ -2301,7 +2475,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const longTip = _longRefs[code] != null
       ? `${longLabel}の基準20日平均 ${fmt(_longRefs[code])}円` : '長期比較不能';
     return `<div class="comparison-block ${blockCls}" title="${escapeHtml(`${threeTip} / ${longTip}`)}">
-      <span class="comparison-metric"><span class="comparison-name">3年比</span> ${comparisonChangeHtml(change3y)}</span>
+      <span class="comparison-metric"><span class="comparison-name">株価のみ・3年比</span> ${comparisonChangeHtml(change3y)}</span>
       <span class="comparison-sep">|</span>
       <span class="comparison-metric"><span class="comparison-name">${longLabel}</span> ${comparisonChangeHtml(longChange)}</span>
       ${tag}
@@ -2381,6 +2555,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const fRangePosMax = parseFloat(document.getElementById('f-rangepos-max').value);
     let hidden = 0;
     const enriched = enrichedAll.filter(e => {
+      if (document.getElementById('f-topix-only').checked && topixLongResult(e.s.code) !== 'win') {
+        hidden++; return false;
+      }
       if (!isNaN(fRangePosMax) && e.rangePos != null && e.rangePos > fRangePosMax) {
         hidden++; return false;
       }
@@ -2463,6 +2640,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
           </div>
           <div class="ic-grid">${valuationGridHtml(valuationLevel(p, _high52s[s.code], _low52s[s.code], rsi, rsiSma14, _bbUppers[s.code], _bbLowers[s.code]).items)}</div>
           ${comparisonBlockHtml(s.code)}
+          ${topixCardHtml(s.code)}
           ${yieldBlockHtml(s, p, _divYields[s.code])}
           <div class="actions">
             <a href="https://finance.yahoo.co.jp/quote/${s.code}.T" target="_blank" rel="noopener">Y!</a>
@@ -2473,6 +2651,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
         subgrid.appendChild(card);
       });
     });
+    if (enriched.length === 0) {
+      grid.innerHTML = '<div class="empty">現在の条件に該当する銘柄はありません。52週レンジの条件を広げるか、「条件クリア」で全銘柄を確認できます。</div>';
+    }
     const filterNote = hidden > 0
       ? ` <span style="color:#d35400">(条件で <strong>${hidden}</strong> 件非表示)</span>` : '';
     document.getElementById('summary').innerHTML =
@@ -2511,11 +2692,15 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       _longChanges = data.long_changes || {};
       _longLabels = data.long_labels || {};
       _longYears = data.long_years || {};
+      _topixComparisons = data.topix_comparisons || {};
+      _topixLoaded = true;
       _divYields = data.div_yields || {};
       render();
+      renderTopix();
       status.textContent = `最終更新: ${data.fetched_at}`;
     } catch (e) {
       status.textContent = '取得失敗: ' + e.message;
+      document.getElementById('topix-summary').textContent = '比較データの取得に失敗しました。再読み込みしてください。';
     } finally {
       btn.disabled = false;
     }
@@ -2578,6 +2763,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       const idx = STOCKS.findIndex(s => s.code === code);
       if (idx >= 0) STOCKS.splice(idx, 1);
       renderStockList();
+      renderTopix();
       render();
     } catch (e) { alert('解除失敗: ' + e.message); }
   }
@@ -2599,15 +2785,21 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   });
 
   // フィルタ入力イベント (rerenderのみ、API再取得不要)
-  ['f-rangepos-max'].forEach(id => {
+  ['topix-filter', 'topix-sort'].forEach(id => {
+    document.getElementById(id).addEventListener('change', renderTopix);
+  });
+  ['f-rangepos-max', 'f-topix-only'].forEach(id => {
     document.getElementById(id).addEventListener('input', render);
   });
   document.getElementById('f-clear').addEventListener('click', () => {
     document.getElementById('f-rangepos-max').value = '';
+    document.getElementById('f-topix-only').checked = false;
     render();
   });
 
   renderStockList();
+  if (location.hash === '#topix') switchView('topix-view');
+  else if (location.hash === '#stocks') switchView('stock-list-view');
   refreshPrices();
 </script>
 

@@ -13,6 +13,8 @@ on:
       - 'stocks.json'
       - 'app.py'
       - 'generator.py'
+      - 'benchmark.py'
+      - 'tests/**'
       - 'requirements.txt'
       - '.github/workflows/build.yml'
 
@@ -35,6 +37,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Test benchmark calculations
+        run: python -m unittest discover -s tests -v
 
       - name: Generate static HTML
         run: python generator.py

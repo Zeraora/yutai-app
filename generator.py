@@ -80,6 +80,7 @@ def main() -> None:
         high52s, low52s, bb_uppers, bb_lowers,
         price3y_refs, price3y_changes,
         long_refs, long_changes, long_labels, long_years,
+        topix_comparisons,
     ) = fetch_prices_and_rsi()
     div_yields = fetch_dividend_yields()
     ok_p = sum(1 for v in prices.values() if v)
@@ -106,6 +107,9 @@ def main() -> None:
             + ", ".join(missing_common)
         )
 
+    if not any(period.get("available") for periods in topix_comparisons.values() for period in periods.values()):
+        raise RuntimeError("TOPIX比較を取得できないため公開HTMLを更新しません")
+
     embedded = {
         "prices": prices,
         "rsis": rsis,
@@ -120,6 +124,7 @@ def main() -> None:
         "long_changes": long_changes,
         "long_labels": long_labels,
         "long_years": long_years,
+        "topix_comparisons": topix_comparisons,
         "div_yields": div_yields,
         "fetched_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
     }
