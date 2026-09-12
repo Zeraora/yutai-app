@@ -38,4 +38,4 @@ python -m unittest discover -s tests -v
 node --test tests/test_comparison.cjs
 ```
 
-GitHub Actionsでも計算・API・静的生成のテスト後にHTMLを生成します。
+GitHub Actionsではデータ取得とHTML生成を行います。計算・API・静的生成のテストは、上記コマンドで実行できます。
