@@ -336,9 +336,9 @@ def fetch_prices_and_rsi() -> tuple[
 
     today = datetime.now(JST).date()
     try:
-        history_start = today.replace(year=today.year - 11).isoformat()
+        history_start = today.replace(year=today.year - 14).isoformat()
     except ValueError:
-        history_start = today.replace(year=today.year - 11, day=28).isoformat()
+        history_start = today.replace(year=today.year - 14, day=28).isoformat()
     try:
         data = yf.download(
             symbols, start=history_start, progress=False,
@@ -2111,12 +2111,36 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .benchmark-card strong { color: #25455e; }
   .benchmark-card-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4em; margin-top: 0.25em; }
   .benchmark-card-row .benchmark-gap { margin: 0; }
+  .benchmark-table th.selected-period { box-shadow: inset 0 -3px #2980b9; }
+  .benchmark-table td.selected-period { background: #f8fbfe; }
+  .annual-gap { display: block; margin: 0.35em 0; font-weight: bold; font-size: 1.05em; }
+  .rolling-details { margin-top: 0.65em; border-top: 1px solid #dce7ee; padding-top: 0.4em; font-size: 0.88em; }
+  .rolling-details summary { cursor: pointer; color: #25455e; }
+  .rolling-details p { margin: 0.4em 0; }
+  .rolling-samples { max-height: 220px; overflow-y: auto; padding-left: 1.2em; font-size: 0.9em; }
+  .rolling-samples li { margin: 0.4em 0; }
+  .benefit-panel { margin: 1em 0; background: #fff; border: 1px solid #c9dbe6; border-radius: 6px; padding: 0.8em 1em; }
+  .benefit-panel > summary { cursor: pointer; font-weight: bold; color: #25455e; }
+  .benefit-panel p { font-size: 0.88em; color: #555; }
+  .benefit-inputs { display: flex; flex-wrap: wrap; align-items: end; gap: 0.8em; }
+  .benefit-inputs label { display: flex; flex-direction: column; gap: 0.3em; font-size: 0.85em; }
+  .benefit-inputs input, .benefit-inputs select { padding: 0.5em; border: 1px solid #bbb; border-radius: 4px; font: inherit; max-width: 100%; box-sizing: border-box; }
+  .benefit-inputs input { width: 190px; }
+  .benefit-inputs select { width: 310px; }
+  .benefit-action { padding: 0.4em 0.6em; margin-top: 0.5em; background: #eaf1f6; color: #25455e; border: 1px solid #c9dbe6; border-radius: 4px; font-size: 0.85em; cursor: pointer; }
+  .benefit-action:disabled { opacity: 0.5; cursor: default; }
+  .benefit-result { margin-top: 1em; padding: 0.8em; border-left: 3px solid #2980b9; background: #f4f8fb; }
+  .benefit-result dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45em 1em; font-size: 0.9em; }
+  .benefit-result dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .benefit-sim-btn { white-space: normal; }
   @media (max-width: 600px) {
     body { padding: 0 0.7em; }
     .view-tab { padding: 0.55em 0.65em; font-size: 0.9em; }
     .subgrid { grid-template-columns: minmax(0, 1fr); }
     .benchmark-controls label { display: flex; flex-direction: column; gap: 0.3em; }
     .benchmark-scroll-hint { display: block; font-size: 0.8em; color: #666; }
+    .benefit-panel { padding: 0.7em; }
+    .benefit-inputs label, .benefit-inputs input, .benefit-inputs select { width: 100%; }
   }
 </style>
 </head>
@@ -2139,7 +2163,14 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="30" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
-  <label style="font-size:0.85em"><input type="checkbox" id="f-topix-only">5年・10年ともTOPIX（ETF）を上回る銘柄のみ</label>
+  <label style="font-size:0.85em">TOPIX（ETF）条件 <select id="f-topix-only">
+    <option value="all">指定なし</option>
+    <option value="5-win">5年で上回る</option>
+    <option value="10-win">10年で上回る</option>
+    <option value="both">5年・10年とも上回る</option>
+    <option value="5-near">5年の年率差が±1pt以内</option>
+    <option value="5-rolling">5年・時期変更で7割以上上回る</option>
+  </select></label>
 </div>
 
 <div class="summary" id="summary">
@@ -2160,33 +2191,57 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 <section id="topix-view" class="view-panel" role="tabpanel" aria-labelledby="tab-topix" hidden>
   <div class="benchmark-intro">
     <h2>市場全体を上回る成長だったか</h2>
-    <p>3年・5年・10年の配当再投資込みリターンを、同じ期間で比較。長期投資では5年と10年を中心に、3年は最近の変化を見るために使えます。</p>
-    <p><strong>比較対象はTOPIX連動ETF（1305）です。</strong>分配金再投資を近似した値で、配当込みTOPIX指数そのものではありません。優待価値・税金・売買手数料は含みません。</p>
+    <p>年率でどのくらい差があるか、比較する時期をずらしても上回るかを確認できます。僅差の銘柄は、優待の試算も使って判断できます。</p>
+    <p><strong>比較対象はTOPIX連動ETF（1305）です。</strong>過去実績は双方とも配当再投資の近似値で、優待価値・税金・売買手数料を含みません。優待は下の仮定試算で評価します。</p>
   </div>
   <div class="benchmark-controls">
+    <label>判断する期間 <select id="topix-period">
+      <option value="3">3年</option><option value="5" selected>5年</option><option value="10">10年</option>
+    </select></label>
     <label>表示対象 <select id="topix-filter">
       <option value="all">全銘柄</option>
-      <option value="win">5年・10年とも上回る</option>
-      <option value="lose">5年・10年とも下回る</option>
-      <option value="missing">5年または10年が比較不能</option>
+      <option value="win">対象期間で上回る</option>
+      <option value="lose">対象期間で下回る</option>
+      <option value="near">年率差が±1pt以内（僅差）</option>
+      <option value="rolling">時期変更で7割以上上回る（36期間）</option>
+      <option value="both-win">5年・10年とも上回る</option>
+      <option value="both-lose">5年・10年とも下回る</option>
+      <option value="missing">対象期間が比較不能</option>
     </select></label>
-    <label>差が大きい順 <select id="topix-sort">
-      <option value="10">10年の差</option>
-      <option value="5">5年の差</option>
-      <option value="3">3年の差</option>
+    <label>並び順 <select id="topix-sort">
+      <option value="gap">年率差が大きい順</option>
+      <option value="near">年率差が小さい順（僅差から）</option>
+      <option value="rolling">時期変更で上回った割合順（36期間優先）</option>
     </select></label>
   </div>
   <p class="stock-list-summary" id="topix-summary" aria-live="polite">比較データを取得中…</p>
+  <details class="benefit-panel" id="benefit-panel">
+    <summary>優待で差を補えるか試算する</summary>
+    <p id="benefit-assumption"></p>
+    <div class="benefit-inputs">
+      <label>試算する銘柄 <select id="benefit-code"></select></label>
+      <label>買う株数（受給条件に合う株数）<input id="benefit-shares" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label>毎年実際に使える優待額（この株数分）<input id="benefit-annual" type="number" min="0" step="any" inputmode="decimal" placeholder="円／年・未入力"></label>
+    </div>
+    <p id="benefit-reference"></p>
+    <button type="button" id="benefit-seed" class="benefit-action">登録済みの株数・優待額を仮入力</button>
+    <p>登録値は最新の優待制度との照合前です。保有期間・株数などの条件を確認し、使わない分は除いて入力してください。入力はこのブラウザー内に保存します。</p>
+    <div id="benefit-result" class="benefit-result" aria-live="polite"></div>
+    <p>将来の成績や優待の継続を予測するものではありません。現在の優待を過去年数分足した「過去実績」にはせず、表の勝敗にも加えません。</p>
+  </details>
   <p class="benchmark-scroll-hint">表を横にスクロールすると5年・10年も確認できます →</p>
   <div class="stock-table-wrap" tabindex="0" role="region" aria-label="TOPIX長期比較表。横にスクロールできます">
     <table class="stock-table benchmark-table">
-      <thead><tr><th scope="col">銘柄</th><th scope="col">3年</th><th scope="col">5年</th><th scope="col">10年</th></tr></thead>
+      <thead><tr><th scope="col">銘柄</th><th scope="col" data-period="3">3年</th><th scope="col" data-period="5">5年</th><th scope="col" data-period="10">10年</th></tr></thead>
       <tbody id="topix-body"></tbody>
     </table>
   </div>
   <details class="benchmark-method">
     <summary>比較の読み方・計算方法</summary>
     <p>「差」は銘柄の累積リターン − ETFの累積リターン（ポイント）。例：銘柄＋80%、ETF＋50%なら＋30ポイントです。「年率」は複利で年平均に換算したリターン（CAGR）です。</p>
+    <p>「年率差」は両者のCAGRの差です。僅差フィルターは±1ポイント、時期変更フィルターは36期間すべて計算できて7割以上上回ることを条件にしています。どちらも表示上の目安で、買い判断そのものではありません。</p>
+    <p>時期変更は最新終点と、その前35か月の月末を終点に、毎回同じ3年・5年・10年を比較します。各回とも銘柄とETFの取引日を揃えます。期間は大きく重なるため独立した36回の検証ではなく、上回った割合は将来の勝率ではありません。履歴不足の場合は計算できた件数を併記し、36期間の絞り込みから除外します。</p>
+    <p>優待の試算は、選択期間の過去年率が今後も続くと仮定し、現在株価×入力株数を双方の初期投資額にします。配当・分配金は再投資、優待は入力した年額を毎年受け取り再投資しない仮定です。必要な年間優待額＝max(ETFの将来仮定額−銘柄の将来仮定額, 0)÷年数。過去の優待込み実績を求めるには、各年の制度・保有株数・利用額の履歴が別途必要です。</p>
     <p>双方の株式分割・配当調整済み終値から、税引前の配当・分配金再投資リターンを近似します。ETF側には信託報酬などの運用費用と市場価格の乖離が反映されるため、指数とは差が生じます。現在の配当利回りを過去年数分足す計算はしません。</p>
     <p>始点は3・5・10年前の同日以前に両者の価格がある直近の取引日、終点は両者共通の確定日足。同じ日付で比較し、各欄に期間を表示します。従来の「3年比・10年前比」は配当を除いた株価の20日平均基準なので、この比較とは異なります。</p>
     <p>上場・再上場から必要な年数がない場合や、同じ日付のデータが揃わない場合は「比較不能」。勝ち負けの判定や絞り込みに含めません。過去の上回り・下回りは今後のリターンを保証しません。</p>
@@ -2244,6 +2299,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 <script>
   const STOCKS = {{ stocks_json | safe }};
   let _prices = {}, _rsis = {}, _rsiSma14s = {};
+  // __COMPARISON_MATH__
   let _high52s = {}, _low52s = {};
   let _bbUppers = {}, _bbLowers = {};
   let _price3yRefs = {}, _price3yChanges = {};
@@ -2384,57 +2440,89 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   }
   function topixPeriod(code, years) {
     const p = _topixComparisons[code]?.[String(years)];
-    return p?.available && ['stock_return', 'benchmark_return', 'excess_pp', 'stock_cagr', 'benchmark_cagr'].every(key => Number.isFinite(p[key])) ? p : null;
+    return ComparisonMath.validPeriod(p) ? p : null;
   }
   function topixLongResult(code) {
     const five = topixPeriod(code, 5), ten = topixPeriod(code, 10);
     if (!five || !ten) return 'missing';
-    if (five.excess_pp > 0 && ten.excess_pp > 0) return 'win';
-    if (five.excess_pp < 0 && ten.excess_pp < 0) return 'lose';
+    if (ComparisonMath.matches(five, 'win') && ComparisonMath.matches(ten, 'win')) return 'win';
+    if (ComparisonMath.matches(five, 'lose') && ComparisonMath.matches(ten, 'lose')) return 'lose';
     return 'mixed';
   }
-  function signedReturn(value, unit = '%') {
-    return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}${unit}`;
+  function signedReturn(value, unit = '%', digits = 1) {
+    return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(digits)}${unit}`;
+  }
+  function annualGapHtml(p) {
+    const gap = p.excess_cagr_pp;
+    const cls = gap > 1e-9 ? 'win' : gap < -1e-9 ? 'lose' : 'flat';
+    return `<span class="annual-gap benchmark-${cls}">年率差 ${signedReturn(gap, 'pt', 2)}</span>`;
   }
   function topixGapHtml(p) {
-    const cls = p.excess_pp > 0 ? 'win' : p.excess_pp < 0 ? 'lose' : 'flat';
-    const label = p.excess_pp > 0 ? '上回る' : p.excess_pp < 0 ? '下回る' : '同水準';
-    const difference = Math.abs(p.excess_pp) < 0.1 && p.excess_pp !== 0
-      ? `${p.excess_pp > 0 ? '+' : '−'}0.1pt未満` : signedReturn(p.excess_pp, 'pt');
-    return `<span class="benchmark-gap benchmark-${cls}">${difference} ${label}</span>`;
+    const cls = p.excess_pp > 1e-9 ? 'win' : p.excess_pp < -1e-9 ? 'lose' : 'flat';
+    const label = cls === 'win' ? '上回る' : cls === 'lose' ? '下回る' : '同水準';
+    return `<span class="benchmark-gap benchmark-${cls}">累積差 ${signedReturn(p.excess_pp, 'pt')} ${label}</span>`;
+  }
+  function rollingHtml(r) {
+    if (!r?.count) return '<p class="benchmark-missing">時期変更：比較できる履歴なし</p>';
+    const coverage = r.complete ? `${r.count}期間` : `参考・${r.count}/${r.requested}期間のみ`;
+    return `<details class="rolling-details">
+      <summary>時期変更：${r.wins}/${r.count}回上回る (${r.win_rate.toFixed(0)}%)<br><small>${coverage}</small></summary>
+      <p>年率差の中央値 ${signedReturn(r.median_gap, 'pt')}<br>最悪 ${signedReturn(r.min_gap, 'pt')} ／ 最良 ${signedReturn(r.max_gap, 'pt')}</p>
+      <p>期間は互いに重なります。将来の勝率ではありません。</p>
+      <ol class="rolling-samples">${r.samples.map(sample => `<li>${escapeHtml(sample.start)} → ${escapeHtml(sample.end)}<br>年率差 ${signedReturn(sample.excess_cagr_pp, 'pt')}</li>`).join('')}</ol>
+    </details>`;
   }
   function topixCellHtml(code, years) {
     const p = topixPeriod(code, years);
+    const selected = Number(document.getElementById('topix-period').value) === years ? ' selected-period' : '';
     if (!p) {
       const reason = _topixComparisons[code]?.[String(years)]?.reason || (_topixLoaded ? 'データがありません' : '取得中…');
-      return `<td class="benchmark-cell"><span class="benchmark-missing">比較不能<br>${escapeHtml(reason)}</span></td>`;
+      return `<td class="benchmark-cell${selected}"><span class="benchmark-missing">比較不能<br>${escapeHtml(reason)}</span></td>`;
     }
-    return `<td class="benchmark-cell">
+    return `<td class="benchmark-cell${selected}">
       <div class="return-line"><span>銘柄</span><strong>${signedReturn(p.stock_return)}</strong></div>
       <div class="return-line"><small>年率</small><small>${signedReturn(p.stock_cagr)}</small></div>
       <div class="return-line"><span>TOPIX（ETF）</span><span>${signedReturn(p.benchmark_return)}</span></div>
       <div class="return-line"><small>年率</small><small>${signedReturn(p.benchmark_cagr)}</small></div>
-      ${topixGapHtml(p)}
+      ${annualGapHtml(p)}${topixGapHtml(p)}
       <small class="benchmark-date">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</small>
+      ${rollingHtml(p.rolling)}
     </td>`;
   }
   function renderTopix() {
     const filter = document.getElementById('topix-filter').value;
-    const years = document.getElementById('topix-sort').value;
-    const rows = STOCKS.filter(s => filter === 'all' || topixLongResult(s.code) === filter);
+    const years = document.getElementById('topix-period').value;
+    const sort = document.getElementById('topix-sort').value;
+    const rows = STOCKS.filter(s => filter.startsWith('both-')
+      ? topixLongResult(s.code) === filter.slice(5)
+      : ComparisonMath.matches(topixPeriod(s.code, years), filter));
     rows.sort((a, b) => {
       const pa = topixPeriod(a.code, years), pb = topixPeriod(b.code, years);
       if (!pa && pb) return 1;
       if (pa && !pb) return -1;
-      return (pa && pb ? pb.excess_pp - pa.excess_pp : 0) || String(a.code).localeCompare(String(b.code));
+      let diff = 0;
+      if (pa && pb) {
+        if (sort === 'near') diff = Math.abs(pa.excess_cagr_pp) - Math.abs(pb.excess_cagr_pp);
+        else if (sort === 'rolling') diff = Number(pb.rolling?.complete === true) - Number(pa.rolling?.complete === true)
+          || (pb.rolling?.win_rate ?? -1) - (pa.rolling?.win_rate ?? -1);
+        else diff = pb.excess_cagr_pp - pa.excess_cagr_pp;
+      }
+      return diff || String(a.code).localeCompare(String(b.code));
     });
-    const counts = { win: 0, lose: 0, mixed: 0, missing: 0 };
-    STOCKS.forEach(s => counts[topixLongResult(s.code)]++);
+    let wins = 0, losses = 0, missing = 0, near = 0;
+    STOCKS.forEach(s => {
+      const p = topixPeriod(s.code, years);
+      if (!p) missing++;
+      if (ComparisonMath.matches(p, 'win')) wins++;
+      if (ComparisonMath.matches(p, 'lose')) losses++;
+      if (ComparisonMath.matches(p, 'near')) near++;
+    });
     document.getElementById('topix-summary').textContent = _topixLoaded
-      ? `${rows.length} / ${STOCKS.length}銘柄表示 ｜ 全体：5年・10年とも上回る ${counts.win}、ともに下回る ${counts.lose}、期間で結果が異なる・同水準 ${counts.mixed}、比較不能 ${counts.missing}`
+      ? `${rows.length} / ${STOCKS.length}銘柄表示 ｜ ${years}年の全体：上回る ${wins}、下回る ${losses}、同水準 ${STOCKS.length - missing - wins - losses}、比較不能 ${missing}（年率差±1pt以内は ${near}）`
       : '比較データを取得中…';
+    document.querySelectorAll('.benchmark-table th[data-period]').forEach(th => th.classList.toggle('selected-period', th.dataset.period === years));
     document.getElementById('topix-body').innerHTML = rows.length ? rows.map(s => `<tr>
-      <th scope="row" class="name"><small>${escapeHtml(s.code)}</small><br>${escapeHtml(s.name)}</th>
+      <th scope="row" class="name"><small>${escapeHtml(s.code)}</small><br>${escapeHtml(s.name)}<br><button type="button" class="benefit-action benefit-sim-btn" data-code="${escapeHtml(s.code)}" aria-label="${escapeHtml(s.name)}の優待を試算">優待を試算</button></th>
       ${[3, 5, 10].map(year => topixCellHtml(s.code, year)).join('')}
     </tr>`).join('') : '<tr><td colspan="4" class="empty">この条件に該当する銘柄はありません。</td></tr>';
   }
@@ -2443,11 +2531,86 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       ${[5, 10].map(years => {
         const p = topixPeriod(code, years);
         return `<div class="benchmark-card-row"><span>${years}年</span>${p
-          ? `${topixGapHtml(p)}<span>銘柄 ${signedReturn(p.stock_return)} / ETF ${signedReturn(p.benchmark_return)}</span>`
+          ? `<span>年率差 ${signedReturn(p.excess_cagr_pp, 'pt')}</span>${topixGapHtml(p)}`
           : '<span class="benchmark-missing">比較不能（履歴不足・未取得）</span>'}</div>`;
       }).join('')}
+      <button type="button" class="benefit-action benefit-sim-btn" data-code="${escapeHtml(code)}">時期変更・優待の試算を見る</button>
       <small>配当再投資の近似値・優待価値は含まず</small>
     </div>`;
+  }
+  const BENEFIT_STORAGE_KEY = 'yutai-topix-benefit-scenario-v1';
+  let _benefitPrefs = {code: '3197', inputs: {}};
+  try {
+    const saved = JSON.parse(localStorage.getItem(BENEFIT_STORAGE_KEY));
+    if (saved && typeof saved.code === 'string' && saved.inputs && typeof saved.inputs === 'object') _benefitPrefs = saved;
+  } catch (_) { /* 保存不可の場合も画面内の試算は使用できる */ }
+  function numberInput(id) {
+    const value = document.getElementById(id).value.trim();
+    return value === '' ? null : Number(value);
+  }
+  function saveBenefitInputs() {
+    const code = document.getElementById('benefit-code').value;
+    _benefitPrefs.code = code;
+    _benefitPrefs.inputs[code] = {shares: document.getElementById('benefit-shares').value, annual: document.getElementById('benefit-annual').value};
+    try { localStorage.setItem(BENEFIT_STORAGE_KEY, JSON.stringify(_benefitPrefs)); } catch (_) {}
+  }
+  function loadBenefitInputs() {
+    const code = document.getElementById('benefit-code').value;
+    const s = STOCKS.find(s => s.code === code);
+    const saved = _benefitPrefs.inputs[code];
+    document.getElementById('benefit-shares').value = saved?.shares ?? s?.yutai_shares ?? 100;
+    document.getElementById('benefit-annual').value = saved?.annual ?? '';
+    renderBenefit();
+  }
+  function initBenefitControls() {
+    const sorted = [...STOCKS].sort((a,b) => String(a.code).localeCompare(String(b.code)));
+    document.getElementById('benefit-code').innerHTML = sorted.map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.code)} ${escapeHtml(s.name)}</option>`).join('');
+    document.getElementById('benefit-code').value = sorted.some(s => s.code === _benefitPrefs.code) ? _benefitPrefs.code : (sorted[0]?.code || '');
+    loadBenefitInputs();
+  }
+  function renderBenefit() {
+    const code = document.getElementById('benefit-code').value;
+    const s = STOCKS.find(s => s.code === code);
+    const years = Number(document.getElementById('topix-period').value);
+    const p = topixPeriod(code, years);
+    document.getElementById('benefit-assumption').textContent = `過去${years}年の年率が今後${years}年も続き、優待は毎年同額を受け取ると仮定します。配当は再投資、優待は再投資せず累計額を加えます。`;
+    const hasReference = s && Number.isFinite(s.yutai_value) && s.yutai_value >= 0 && Number.isFinite(s.yutai_shares) && s.yutai_shares > 0;
+    document.getElementById('benefit-reference').textContent = hasReference
+      ? `登録参考値（未検証）：${fmt(s.yutai_shares)}株で年${fmt(s.yutai_value)}円相当${s.yutai_item ? `（${s.yutai_item}）` : ''}`
+      : '登録済みの優待額がありません。使える金額を確認して入力してください。';
+    document.getElementById('benefit-seed').disabled = !hasReference;
+    const target = document.getElementById('benefit-result');
+    if (!p) {
+      target.textContent = _topixLoaded ? `この銘柄は${years}年の比較データがないため試算できません。判断する期間を変更してください。` : '比較データを取得中…';
+      return;
+    }
+    const price = _prices[code], shares = numberInput('benefit-shares'), annualValue = numberInput('benefit-annual');
+    const args = {price, shares, years, stockCagr: p.stock_cagr, benchmarkCagr: p.benchmark_cagr};
+    const threshold = ComparisonMath.benefitScenario({...args, annualValue:0});
+    if (!threshold) { target.textContent = '有効な株価と1株以上の整数の株数が必要です。'; return; }
+    const needed = threshold.annualNeeded;
+    const headline = needed > 0
+      ? `この仮定でETFとの差を埋める優待額：年${fmt(Math.ceil(needed))}円以上（${fmt(shares)}株分）`
+      : 'この仮定では、優待を加える前からETF以上です。';
+    const base = `<strong>${headline}</strong><p>初期投資：${price.toLocaleString('ja-JP', {maximumFractionDigits: 2})}円 × ${fmt(shares)}株 ＝ ${fmt(threshold.initial)}円<br>参考の過去年率：銘柄 ${signedReturn(p.stock_cagr, '%', 2)} ／ ETF ${signedReturn(p.benchmark_cagr, '%', 2)}（${escapeHtml(p.start)}〜${escapeHtml(p.end)}）</p>`;
+    if (annualValue === null) { target.innerHTML = base + '<p>年間で実際に使える優待額を入力すると、差を補えるか試算します。未入力のため優待込みの判定はしていません。</p>'; return; }
+    const r = ComparisonMath.benefitScenario({...args,annualValue});
+    if (!r) { target.innerHTML = base + '<p>年間優待額は0円以上の有効な数値を入力してください。</p>'; return; }
+    target.innerHTML = base + `<dl>
+      <dt>${years}年後の銘柄・配当込み仮定額</dt><dd>${fmt(r.stockEnd)}円</dd>
+      <dt>使える優待の${years}年累計</dt><dd>＋${fmt(r.benefitTotal)}円</dd>
+      <dt>銘柄＋累計優待価値</dt><dd><strong>${fmt(r.totalEnd)}円</strong></dd>
+      <dt>${years}年後のETF・分配金込み仮定額</dt><dd>${fmt(r.benchmarkEnd)}円</dd>
+      <dt>差額</dt><dd>${r.difference >= 0 ? '＋' : '−'}${fmt(Math.abs(r.difference))}円</dd>
+      <dt>銘柄＋累計優待価値の年率換算</dt><dd>${signedReturn(r.annualizedWithBenefits, '%', 2)}</dd>
+      </dl><strong class="benchmark-gap benchmark-${r.covers ? 'win' : 'lose'}">${r.covers ? '入力した仮定では差を補えます' : '入力した仮定では差が残ります'}</strong>`;
+  }
+  function openBenefit(code) {
+    switchView('topix-view');
+    document.getElementById('benefit-code').value = code;
+    loadBenefitInputs();
+    document.getElementById('benefit-panel').open = true;
+    document.getElementById('benefit-panel').scrollIntoView({block:'start'});
   }
   function comparisonPeriodLabel(label, years) {
     if (!label) return '長期比';
@@ -2555,7 +2718,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const fRangePosMax = parseFloat(document.getElementById('f-rangepos-max').value);
     let hidden = 0;
     const enriched = enrichedAll.filter(e => {
-      if (document.getElementById('f-topix-only').checked && topixLongResult(e.s.code) !== 'win') {
+      const topixFilter = document.getElementById('f-topix-only').value;
+      const [period, condition] = topixFilter.split('-');
+      const passesTopix = topixFilter === 'all' || (topixFilter === 'both'
+        ? topixLongResult(e.s.code) === 'win'
+        : ComparisonMath.matches(topixPeriod(e.s.code, period), condition));
+      if (!passesTopix) {
         hidden++; return false;
       }
       if (!isNaN(fRangePosMax) && e.rangePos != null && e.rangePos > fRangePosMax) {
@@ -2697,6 +2865,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       _divYields = data.div_yields || {};
       render();
       renderTopix();
+      renderBenefit();
       status.textContent = `最終更新: ${data.fetched_at}`;
     } catch (e) {
       status.textContent = '取得失敗: ' + e.message;
@@ -2754,6 +2923,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       }
       render();
       closeModal();
+      renderTopix();
+      renderBenefit();
     } catch (e) { alert('保存失敗: ' + e.message); }
   }
   async function unstar(code) {
@@ -2764,6 +2935,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       if (idx >= 0) STOCKS.splice(idx, 1);
       renderStockList();
       renderTopix();
+      initBenefitControls();
       render();
     } catch (e) { alert('解除失敗: ' + e.message); }
   }
@@ -2774,6 +2946,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     if (e.target.id === 'analysis-modal') closeModal();
   });
   document.getElementById('grid').addEventListener('click', e => {
+    const benefitBtn = e.target.closest('.benefit-sim-btn');
+    if (benefitBtn) { openBenefit(benefitBtn.dataset.code); return; }
     const editBtn = e.target.closest('.edit-btn');
     if (editBtn) { openModal(editBtn.dataset.code); return; }
     const star = e.target.closest('.star-btn');
@@ -2785,19 +2959,35 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   });
 
   // フィルタ入力イベント (rerenderのみ、API再取得不要)
-  ['topix-filter', 'topix-sort'].forEach(id => {
-    document.getElementById(id).addEventListener('change', renderTopix);
+  ['topix-period', 'topix-filter', 'topix-sort'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { renderTopix(); renderBenefit(); });
+  });
+  document.getElementById('topix-body').addEventListener('click', e => {
+    const button = e.target.closest('.benefit-sim-btn');
+    if (button) openBenefit(button.dataset.code);
+  });
+  document.getElementById('benefit-code').addEventListener('change', () => { loadBenefitInputs(); saveBenefitInputs(); });
+  ['benefit-shares', 'benefit-annual'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => { saveBenefitInputs(); renderBenefit(); });
+  });
+  document.getElementById('benefit-seed').addEventListener('click', () => {
+    const s = STOCKS.find(s => s.code === document.getElementById('benefit-code').value);
+    if (!s) return;
+    document.getElementById('benefit-shares').value = s.yutai_shares;
+    document.getElementById('benefit-annual').value = s.yutai_value;
+    saveBenefitInputs(); renderBenefit();
   });
   ['f-rangepos-max', 'f-topix-only'].forEach(id => {
     document.getElementById(id).addEventListener('input', render);
   });
   document.getElementById('f-clear').addEventListener('click', () => {
     document.getElementById('f-rangepos-max').value = '';
-    document.getElementById('f-topix-only').checked = false;
+    document.getElementById('f-topix-only').value = 'all';
     render();
   });
 
   renderStockList();
+  initBenefitControls();
   if (location.hash === '#topix') switchView('topix-view');
   else if (location.hash === '#stocks') switchView('stock-list-view');
   refreshPrices();
@@ -2806,6 +2996,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 </body>
 </html>
 """
+
+
+WATCHLIST_HTML = WATCHLIST_HTML.replace(
+    "// __COMPARISON_MATH__",
+    (Path(__file__).parent / "comparison.js").read_text(encoding="utf-8"),
+)
 
 
 if __name__ == "__main__":

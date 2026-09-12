@@ -83,6 +83,47 @@ class TotalReturnComparisonTests(unittest.TestCase):
         self.assertFalse(self.compare(stock=stock)["3"]["available"])
 
 
+class RollingComparisonTests(unittest.TestCase):
+    def setUp(self):
+        dates = pd.date_range("2012-01-02", "2026-09-11", freq="B")
+        years = (dates - dates[0]).days / 365.25
+        self.stock = pd.Series(100 * 1.10 ** years, index=dates)
+        self.etf = pd.Series(100 * 1.05 ** years, index=dates)
+
+    def test_constant_growth_has_36_wins_for_every_horizon(self):
+        results = compare_total_returns(self.stock, self.etf, as_of="2026-09-11")
+        for period in results.values():
+            r = period["rolling"]
+            self.assertTrue(r["complete"])
+            self.assertEqual((r["wins"], r["count"], r["win_rate"]), (36, 36, 100))
+            self.assertAlmostEqual(r["median_gap"], 5)
+            self.assertAlmostEqual(r["min_gap"], 5)
+            self.assertAlmostEqual(r["max_gap"], 5)
+            self.assertEqual(r["samples"][0]["end"], "2026-09-11")
+            self.assertEqual(r["samples"][1]["end"], "2026-08-31")
+            self.assertEqual(len({s["end"] for s in r["samples"]}), 36)
+
+    def test_shorter_listing_reports_partial_coverage(self):
+        periods = compare_total_returns(self.stock.loc["2020-10-01":], self.etf, as_of="2026-09-11")
+        self.assertTrue(periods["5"]["available"])
+        self.assertFalse(periods["5"]["rolling"]["complete"])
+        self.assertGreater(periods["5"]["rolling"]["count"], 1)
+        self.assertLess(periods["5"]["rolling"]["count"], 36)
+        self.assertEqual(periods["10"]["rolling"]["count"], 0)
+        self.assertIsNone(periods["10"]["rolling"]["win_rate"])
+
+    def test_missing_month_endpoint_is_skipped_for_both_series(self):
+        stock = self.stock.drop(pd.Timestamp("2026-08-31"))
+        r = compare_total_returns(stock, self.etf, as_of="2026-09-11")["5"]["rolling"]
+        self.assertEqual(r["count"], 35)
+        self.assertFalse(r["complete"])
+        self.assertNotIn("2026-08-31", [s["end"] for s in r["samples"]])
+
+    def test_identical_series_are_ties_not_wins(self):
+        r = compare_total_returns(self.etf, self.etf, as_of="2026-09-11")["5"]["rolling"]
+        self.assertEqual((r["wins"], r["losses"], r["ties"]), (0, 0, 36))
+
+
 class ComparisonIntegrationTests(unittest.TestCase):
     def test_api_and_static_generation_include_same_comparison(self):
         import app

@@ -14,6 +14,7 @@ on:
       - 'app.py'
       - 'generator.py'
       - 'benchmark.py'
+      - 'comparison.js'
       - 'tests/**'
       - 'requirements.txt'
       - '.github/workflows/build.yml'
@@ -40,6 +41,9 @@ jobs:
 
       - name: Test benchmark calculations
         run: python -m unittest discover -s tests -v
+
+      - name: Test comparison filters and benefit scenarios
+        run: node --test tests/test_comparison.cjs
 
       - name: Generate static HTML
         run: python generator.py
