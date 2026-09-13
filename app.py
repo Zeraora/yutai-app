@@ -2133,6 +2133,20 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .benefit-result dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45em 1em; font-size: 0.9em; }
   .benefit-result dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
   .benefit-sim-btn { white-space: normal; }
+  .market-filter { margin: 1em 0; padding: 1em; border: 1px solid #c9dbe6; border-radius: 6px; background: #f4f8fb; }
+  .market-filter-toggle { display: flex; align-items: start; gap: 0.6em; font-weight: bold; color: #25455e; }
+  .market-filter-toggle input { width: 1.15em; height: 1.15em; flex-shrink: 0; }
+  .market-filter-rule { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5em; margin-top: 0.8em; font-size: 0.9em; }
+  .market-filter-rule select { max-width: 100%; padding: 0.4em; font: inherit; border: 1px solid #bbb; border-radius: 4px; background: white; }
+  .market-filter p { margin: 0.65em 0; font-size: 0.9em; }
+  .market-filter small { display: block; color: #5b6770; margin-top: 0.8em; }
+  .market-filter details { font-size: 0.9em; }
+  .market-filter summary, .benchmark-panel > summary { cursor: pointer; font-weight: bold; color: #25455e; }
+  .market-filter ul { padding-left: 1.3em; max-height: 280px; overflow: auto; }
+  .market-filter li { margin: 0.7em 0; overflow-wrap: anywhere; }
+  .market-filter li small { margin: 0.2em 0; }
+  .market-verdict { margin: 0.4em 0; color: #555; }
+  .benchmark-panel { margin: 1em 0; padding: 0.8em; background: #fff; border: 1px solid #dce7ee; border-radius: 5px; }
   @media (max-width: 600px) {
     body { padding: 0 0.7em; }
     .view-tab { padding: 0.55em 0.65em; font-size: 0.9em; }
@@ -2150,8 +2164,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 
 <div class="view-tabs" role="tablist" aria-label="表示切り替え">
   <button type="button" class="view-tab active" id="tab-watchlist" role="tab" aria-selected="true" aria-controls="watchlist-view" data-view="watchlist-view">押し目買いリスト</button>
-  <button type="button" class="view-tab" id="tab-topix" role="tab" aria-selected="false" aria-controls="topix-view" data-view="topix-view">TOPIX比較</button>
-  <button type="button" class="view-tab" id="tab-stock-list" role="tab" aria-selected="false" aria-controls="stock-list-view" data-view="stock-list-view">銘柄一覧 <span id="stock-tab-count"></span></button>
+  <button type="button" class="view-tab" id="tab-stock-list" role="tab" aria-selected="false" aria-controls="stock-list-view" data-view="stock-list-view">登録銘柄 <span id="stock-tab-count"></span></button>
 </div>
 
 <section id="watchlist-view" class="view-panel" role="tabpanel" aria-labelledby="tab-watchlist">
@@ -2163,14 +2176,22 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     52週レンジ位置 ≤ <input type="number" id="f-rangepos-max" value="30" step="5" min="0" max="100" style="width:60px;padding:0.25em 0.4em;border:1px solid #bbb;border-radius:3px"> %
   </label>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
-  <label style="font-size:0.85em">TOPIX（ETF）条件 <select id="f-topix-only">
-    <option value="all">指定なし</option>
-    <option value="5-win">5年で上回る</option>
-    <option value="10-win">10年で上回る</option>
-    <option value="both">5年・10年とも上回る</option>
-    <option value="5-near">5年の年率差が±1pt以内</option>
-    <option value="5-rolling">5年・時期変更で7割以上上回る</option>
+
+</div>
+
+<div class="market-filter">
+  <label class="market-filter-toggle"><input type="checkbox" id="f-hide-underperformers" checked> TOPIXに全期間で明らかに劣る銘柄を非表示</label>
+  <label class="market-filter-rule">判定範囲 <select id="f-topix-rule">
+    <option value="latest">3年・5年・10年すべて</option>
+    <option value="rolling">さらに比較時期をずらしてもすべて</option>
   </select></label>
+  <p id="market-filter-criterion"></p>
+  <p id="market-filter-status" role="status">比較データを取得中…</p>
+  <details id="market-filter-review">
+    <summary id="market-filter-review-title">対象銘柄と判定理由</summary>
+    <div id="market-filter-review-body"></div>
+  </details>
+  <small>配当再投資込みの近似値でTOPIX連動ETF（1305）と比較。優待価値は含みません。履歴不足は非表示にせず残します。</small>
 </div>
 
 <div class="summary" id="summary">
@@ -2185,13 +2206,11 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   </span>
 </div>
 
-<div id="grid" class="grid"></div>
-</section>
-
-<section id="topix-view" class="view-panel" role="tabpanel" aria-labelledby="tab-topix" hidden>
+<details id="topix-view" class="benchmark-panel">
+  <summary>詳しい比較・優待の試算をこの画面で開く</summary>
   <div class="benchmark-intro">
     <h2>市場全体を上回る成長だったか</h2>
-    <p>年率でどのくらい差があるか、比較する時期をずらしても上回るかを確認できます。僅差の銘柄は、優待の試算も使って判断できます。</p>
+    <p>非表示にした銘柄も含む全登録銘柄の比較資料です。一覧の非表示条件は上のスイッチで変更できます。</p>
     <p><strong>比較対象はTOPIX連動ETF（1305）です。</strong>過去実績は双方とも配当再投資の近似値で、優待価値・税金・売買手数料を含みません。優待は下の仮定試算で評価します。</p>
   </div>
   <div class="benchmark-controls">
@@ -2247,6 +2266,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     <p>上場・再上場から必要な年数がない場合や、同じ日付のデータが揃わない場合は「比較不能」。勝ち負けの判定や絞り込みに含めません。過去の上回り・下回りは今後のリターンを保証しません。</p>
     <p>出典：<a href="https://www.daiwa-am.co.jp/etf/funds/5841/" target="_blank" rel="noopener">iFreeETF TOPIX（1305）商品情報</a> ／ 価格履歴：Yahoo Finance</p>
   </details>
+</details>
+<div id="grid" class="grid"></div>
 </section>
 
 <section id="stock-list-view" class="view-panel" role="tabpanel" aria-labelledby="tab-stock-list" hidden>
@@ -2321,7 +2342,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     document.getElementById('stock-tab-count').textContent = `(${STOCKS.length})`;
     document.getElementById('watchlist-total').textContent = STOCKS.length;
     document.getElementById('stock-list-summary').innerHTML =
-      `<strong>${STOCKS.length}銘柄</strong>が押し目買いリストに反映されています。`;
+      `<strong>${STOCKS.length}銘柄</strong>を登録しています。非表示フィルターを適用する前の一覧です。`;
     document.getElementById('stock-list-body').innerHTML = sorted.map((s, index) => `
       <tr>
         <td class="num">${index + 1}</td>
@@ -2343,7 +2364,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     document.querySelectorAll('.view-panel').forEach(panel => {
       panel.hidden = panel.id !== viewId;
     });
-    const hash = viewId === 'topix-view' ? '#topix' : viewId === 'stock-list-view' ? '#stocks' : '#watchlist';
+    const hash = viewId === 'stock-list-view' ? '#stocks' : '#watchlist';
     history.replaceState(null, '', hash);
   }
 
@@ -2449,6 +2470,46 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     if (ComparisonMath.matches(five, 'lose') && ComparisonMath.matches(ten, 'lose')) return 'lose';
     return 'mixed';
   }
+  const MARKET_FILTER_KEY = 'yutai-market-exclusion-v1';
+  try {
+    const saved = JSON.parse(localStorage.getItem(MARKET_FILTER_KEY));
+    if (typeof saved?.enabled === 'boolean') document.getElementById('f-hide-underperformers').checked = saved.enabled;
+    if (['latest', 'rolling'].includes(saved?.rule)) document.getElementById('f-topix-rule').value = saved.rule;
+  } catch (_) { /* 保存できない環境では初期条件で使用する */ }
+  function saveMarketFilter() {
+    try {
+      localStorage.setItem(MARKET_FILTER_KEY, JSON.stringify({
+        enabled: document.getElementById('f-hide-underperformers').checked,
+        rule: document.getElementById('f-topix-rule').value,
+      }));
+    } catch (_) {}
+  }
+  function renderMarketFilter() {
+    const enabled = document.getElementById('f-hide-underperformers').checked;
+    const rule = document.getElementById('f-topix-rule').value;
+    const excluded = STOCKS.filter(s => ComparisonMath.underperformance(_topixComparisons[s.code], rule) === 'exclude');
+    const insufficient = STOCKS.filter(s => ComparisonMath.underperformance(_topixComparisons[s.code], rule) === 'insufficient');
+    document.getElementById('market-filter-criterion').textContent = rule === 'rolling'
+      ? '3年・5年・10年のすべてで年率1ポイント以上下回り、さらに最新終点と直前35か月の月末を終点にした比較でも、全108期間で年率1ポイント以上下回る銘柄が対象です。'
+      : '最新時点からの3年・5年・10年のすべてで、配当込みリターンの年率がETFより1ポイント以上低い銘柄が対象です。1つでもこの条件を満たさない期間があれば残します。';
+    document.getElementById('market-filter-status').textContent = !_topixLoaded
+      ? '比較データを取得中…（取得前は非表示にしません）'
+      : `${enabled ? `TOPIX条件で ${excluded.length} / ${STOCKS.length}銘柄を非表示` : `非表示はオフ（対象 ${excluded.length} / ${STOCKS.length}銘柄）`}。履歴不足 ${insufficient.length}銘柄は判定保留で残します。52週レンジ条件は別に適用します。`;
+    document.getElementById('market-filter-review-title').textContent = `${enabled ? '非表示の銘柄' : '非表示条件に該当する銘柄'}（${_topixLoaded ? excluded.length : '—'}）・判定保留の内訳`;
+    const excludedHtml = excluded.length ? `<ul>${excluded.map(s => {
+      const gaps = [3,5,10].map(year => `${year}年 ${signedReturn(topixPeriod(s.code, year).excess_cagr_pp, 'pt', 2)}`).join(' ／ ');
+      const rolling = rule === 'rolling' ? `<small>時期変更で最も差が小さい期間も ${signedReturn(Math.max(...[3,5,10].map(year => topixPeriod(s.code, year).rolling.max_gap)), 'pt', 2)}（全108期間）</small>` : '';
+      return `<li><strong>${escapeHtml(s.code)} ${escapeHtml(s.name)}</strong><small>年率差：${gaps}</small>${rolling}<button type="button" class="benefit-action benefit-sim-btn" data-code="${escapeHtml(s.code)}">優待で補えるか試算</button></li>`;
+    }).join('')}</ul>` : '<p>該当する銘柄はありません。</p>';
+    const missingHtml = insufficient.length ? `<p>以下は必要な履歴が揃わないため、このフィルターでは非表示にしません。</p><ul>${insufficient.map(s => {
+      const missing = [3,5,10].filter(year => {
+        const p = topixPeriod(s.code, year);
+        return !p || (rule === 'rolling' && !(p.rolling?.complete === true && p.rolling.count === 36 && Number.isFinite(p.rolling.max_gap)));
+      }).map(year => `${year}年${rule === 'rolling' && topixPeriod(s.code, year) ? 'の時期変更' : ''}`).join('・');
+      return `<li>${escapeHtml(s.code)} ${escapeHtml(s.name)}<small>${missing}の履歴不足・比較不能</small></li>`;
+    }).join('')}</ul>` : '';
+    document.getElementById('market-filter-review-body').innerHTML = _topixLoaded ? excludedHtml + missingHtml : '<p>比較データを取得中です。</p>';
+  }
   function signedReturn(value, unit = '%', digits = 1) {
     return `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(digits)}${unit}`;
   }
@@ -2527,11 +2588,13 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     </tr>`).join('') : '<tr><td colspan="4" class="empty">この条件に該当する銘柄はありません。</td></tr>';
   }
   function topixCardHtml(code) {
-    return `<div class="benchmark-card"><strong>配当込み・TOPIX連動ETFとの差</strong>
-      ${[5, 10].map(years => {
+    const verdict = ComparisonMath.underperformance(_topixComparisons[code], document.getElementById('f-topix-rule').value);
+    const label = !_topixLoaded ? '比較データ取得中' : verdict === 'exclude' ? '非表示条件に該当' : verdict === 'insufficient' ? '履歴不足のため判定保留' : '全期間で劣る条件には該当せず';
+    return `<div class="benchmark-card"><strong>配当込み・TOPIX連動ETFとの年率差</strong><p class="market-verdict">${label}</p>
+      ${[3, 5, 10].map(years => {
         const p = topixPeriod(code, years);
         return `<div class="benchmark-card-row"><span>${years}年</span>${p
-          ? `<span>年率差 ${signedReturn(p.excess_cagr_pp, 'pt')}</span>${topixGapHtml(p)}`
+          ? `<span>${signedReturn(p.excess_cagr_pp, 'pt', 2)}</span>`
           : '<span class="benchmark-missing">比較不能（履歴不足・未取得）</span>'}</div>`;
       }).join('')}
       <button type="button" class="benefit-action benefit-sim-btn" data-code="${escapeHtml(code)}">時期変更・優待の試算を見る</button>
@@ -2606,7 +2669,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       </dl><strong class="benchmark-gap benchmark-${r.covers ? 'win' : 'lose'}">${r.covers ? '入力した仮定では差を補えます' : '入力した仮定では差が残ります'}</strong>`;
   }
   function openBenefit(code) {
-    switchView('topix-view');
+    switchView('watchlist-view');
+    document.getElementById('topix-view').open = true;
     document.getElementById('benefit-code').value = code;
     loadBenefitInputs();
     document.getElementById('benefit-panel').open = true;
@@ -2696,6 +2760,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   }
 
   function render() {
+    renderMarketFilter();
     const grid = document.getElementById('grid');
     if (STOCKS.length === 0) {
       grid.innerHTML = '<div class="empty">押し目買いリストに反映中の銘柄がありません。</div>';
@@ -2718,12 +2783,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const fRangePosMax = parseFloat(document.getElementById('f-rangepos-max').value);
     let hidden = 0;
     const enriched = enrichedAll.filter(e => {
-      const topixFilter = document.getElementById('f-topix-only').value;
-      const [period, condition] = topixFilter.split('-');
-      const passesTopix = topixFilter === 'all' || (topixFilter === 'both'
-        ? topixLongResult(e.s.code) === 'win'
-        : ComparisonMath.matches(topixPeriod(e.s.code, period), condition));
-      if (!passesTopix) {
+      if (document.getElementById('f-hide-underperformers').checked
+          && ComparisonMath.underperformance(_topixComparisons[e.s.code], document.getElementById('f-topix-rule').value) === 'exclude') {
         hidden++; return false;
       }
       if (!isNaN(fRangePosMax) && e.rangePos != null && e.rangePos > fRangePosMax) {
@@ -2820,7 +2881,7 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
       });
     });
     if (enriched.length === 0) {
-      grid.innerHTML = '<div class="empty">現在の条件に該当する銘柄はありません。52週レンジの条件を広げるか、「条件クリア」で全銘柄を確認できます。</div>';
+      grid.innerHTML = '<div class="empty">現在の条件に該当する銘柄はありません。52週レンジの条件を広げるか、TOPIXの非表示スイッチをオフにするか、「条件クリア」で全銘柄を確認できます。</div>';
     }
     const filterNote = hidden > 0
       ? ` <span style="color:#d35400">(条件で <strong>${hidden}</strong> 件非表示)</span>` : '';
@@ -2870,6 +2931,9 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     } catch (e) {
       status.textContent = '取得失敗: ' + e.message;
       document.getElementById('topix-summary').textContent = '比較データの取得に失敗しました。再読み込みしてください。';
+      document.getElementById('market-filter-status').textContent = _topixLoaded
+        ? '更新に失敗したため、直前に取得した比較データで判定しています。'
+        : '比較データを取得できないため、TOPIX条件による非表示は行っていません。再読み込みしてください。';
     } finally {
       btn.disabled = false;
     }
@@ -2966,6 +3030,13 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const button = e.target.closest('.benefit-sim-btn');
     if (button) openBenefit(button.dataset.code);
   });
+  document.getElementById('market-filter-review-body').addEventListener('click', e => {
+    const button = e.target.closest('.benefit-sim-btn');
+    if (button) openBenefit(button.dataset.code);
+  });
+  ['f-hide-underperformers', 'f-topix-rule'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { saveMarketFilter(); render(); });
+  });
   document.getElementById('benefit-code').addEventListener('change', () => { loadBenefitInputs(); saveBenefitInputs(); });
   ['benefit-shares', 'benefit-annual'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => { saveBenefitInputs(); renderBenefit(); });
@@ -2977,18 +3048,23 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     document.getElementById('benefit-annual').value = s.yutai_value;
     saveBenefitInputs(); renderBenefit();
   });
-  ['f-rangepos-max', 'f-topix-only'].forEach(id => {
+  ['f-rangepos-max'].forEach(id => {
     document.getElementById(id).addEventListener('input', render);
   });
   document.getElementById('f-clear').addEventListener('click', () => {
     document.getElementById('f-rangepos-max').value = '';
-    document.getElementById('f-topix-only').value = 'all';
+    document.getElementById('f-hide-underperformers').checked = false;
+    saveMarketFilter();
     render();
   });
 
   renderStockList();
   initBenefitControls();
-  if (location.hash === '#topix') switchView('topix-view');
+  renderMarketFilter();
+  if (location.hash === '#topix') {
+    switchView('watchlist-view');
+    document.getElementById('topix-view').open = true;
+  }
   else if (location.hash === '#stocks') switchView('stock-list-view');
   refreshPrices();
 </script>

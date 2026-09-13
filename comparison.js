@@ -13,6 +13,17 @@ const ComparisonMath = (() => {
     if (filter === 'rolling') return p.rolling?.complete === true && p.rolling.count === 36 && p.rolling.win_rate >= 70;
     return false;
   }
+  // 負けが揃う銘柄だけを非表示にする。履歴不足は負けとして扱わない。
+  function underperformance(periods, rule = 'latest') {
+    if (!['latest', 'rolling'].includes(rule)) return 'insufficient';
+    const selected = [3, 5, 10].map(year => periods?.[String(year)]);
+    if (!selected.every(validPeriod)) return 'insufficient';
+    if (rule === 'rolling' && !selected.every(p => p.rolling?.complete === true
+        && p.rolling.count === 36 && Number.isFinite(p.rolling.max_gap))) return 'insufficient';
+    const below = selected.every(p => p.excess_cagr_pp <= -1);
+    return below && (rule === 'latest' || selected.every(p => p.rolling.max_gap <= -1))
+      ? 'exclude' : 'keep';
+  }
   function benefitScenario({ price, shares, annualValue, years, stockCagr, benchmarkCagr }) {
     if (![price, shares, annualValue, years, stockCagr, benchmarkCagr].every(Number.isFinite)
         || price <= 0 || shares <= 0 || !Number.isInteger(shares) || annualValue < 0
@@ -30,6 +41,6 @@ const ComparisonMath = (() => {
     if (!Object.values(result).every(Number.isFinite)) return null;
     return {...result, covers: difference >= -initial * 1e-10};
   }
-  return {validPeriod, matches, benefitScenario};
+  return {validPeriod, matches, underperformance, benefitScenario};
 })();
 if (typeof module !== 'undefined') module.exports = ComparisonMath;

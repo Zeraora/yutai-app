@@ -141,7 +141,9 @@ class ComparisonIntegrationTests(unittest.TestCase):
             html = (Path(temp) / "docs/index.html").read_text()
             embedded = html.split("const EMBEDDED_API_DATA = ", 1)[1].split(";\n", 1)[0]
             self.assertEqual(json.loads(embedded)["topix_comparisons"], comparisons)
-            self.assertIn('id="tab-topix"', html)
+            self.assertIn('id="f-hide-underperformers"', html)
+            self.assertIn('<details id="topix-view"', html)
+            self.assertNotIn('id="tab-topix"', html)
             self.assertNotIn("{{ stocks_json | safe }}", html)
 
     def test_generator_retains_previous_page_when_benchmark_unavailable(self):

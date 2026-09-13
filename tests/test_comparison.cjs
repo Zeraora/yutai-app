@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {matches, benefitScenario} = require('../comparison.js');
+const {matches, underperformance, benefitScenario} = require('../comparison.js');
 
 const period = {available:true, stock_return:80, benchmark_return:50, excess_pp:30, stock_cagr:12, benchmark_cagr:10, excess_cagr_pp:2};
 const scenario = {price:1000, shares:100, annualValue:15000, years:5, stockCagr:0, benchmarkCagr:10};
@@ -48,4 +48,47 @@ test('rolling filter requires all 36 periods and at least 70 percent wins', () =
   assert.equal(matches({...period,rolling:{complete:true,count:36,win_rate:72.2}},'rolling'),true);
   assert.equal(matches({...period,rolling:{complete:false,count:4,win_rate:100}},'rolling'),false);
   assert.equal(matches({...period,rolling:{complete:true,count:36,win_rate:69.4}},'rolling'),false);
+});
+
+const losingPeriods = () => Object.fromEntries([3,5,10].map(year => [String(year), {
+  ...period, excess_cagr_pp:-2, rolling:{complete:true,count:36,max_gap:-1.5}
+}]));
+test('exclusion requires a gap of at least one annual point in all three horizons', () => {
+  const ps = losingPeriods();
+  assert.equal(underperformance(ps), 'exclude');
+  ps['3'].excess_cagr_pp = -1;
+  assert.equal(underperformance(ps), 'exclude');
+  ps['3'].excess_cagr_pp = -0.999;
+  assert.equal(underperformance(ps), 'keep');
+  ps['3'].excess_cagr_pp = 2;
+  assert.equal(underperformance(ps), 'keep');
+});
+test('missing, relisted or invalid ten-year data cannot cause exclusion', () => {
+  const ps = losingPeriods();
+  for (const p of [undefined, {available:false}, {...period,excess_cagr_pp:NaN}]) {
+    ps['10'] = p;
+    assert.equal(underperformance(ps), 'insufficient');
+    assert.equal(underperformance(ps, 'rolling'), 'insufficient');
+  }
+  assert.equal(underperformance(undefined), 'insufficient');
+});
+test('shifted-date exclusion needs all 108 comparisons to be at least one point below', () => {
+  const ps = losingPeriods();
+  assert.equal(underperformance(ps, 'rolling'), 'exclude');
+  ps['5'].rolling.max_gap = -1;
+  assert.equal(underperformance(ps, 'rolling'), 'exclude');
+  ps['5'].rolling.max_gap = -0.99;
+  assert.equal(underperformance(ps, 'rolling'), 'keep');
+  assert.equal(underperformance(ps), 'exclude');
+  ps['5'].rolling.max_gap = 1;
+  assert.equal(underperformance(ps, 'rolling'), 'keep');
+});
+test('partial rolling histories and malformed rolling data stay visible', () => {
+  const ps = losingPeriods();
+  for (const rolling of [undefined, {complete:false,count:20,max_gap:-5},
+    {complete:true,count:35,max_gap:-5}, {complete:true,count:36,max_gap:NaN}]) {
+    ps['10'].rolling = rolling;
+    assert.equal(underperformance(ps, 'rolling'), 'insufficient');
+    assert.equal(underperformance(ps), 'exclude');
+  }
 });
