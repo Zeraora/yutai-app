@@ -51,14 +51,14 @@ test('rolling filter requires all 36 periods and at least 70 percent wins', () =
 });
 
 const losingPeriods = () => Object.fromEntries([3,5,10].map(year => [String(year), {
-  ...period, excess_cagr_pp:-2, rolling:{complete:true,count:36,max_gap:-1.5}
+  ...period, excess_cagr_pp:-6, rolling:{complete:true,count:36,max_gap:-5.5}
 }]));
-test('exclusion requires a gap of at least one annual point in all three horizons', () => {
+test('exclusion requires a gap of at least five annual points in all three horizons', () => {
   const ps = losingPeriods();
   assert.equal(underperformance(ps), 'exclude');
-  ps['3'].excess_cagr_pp = -1;
+  ps['3'].excess_cagr_pp = -5;
   assert.equal(underperformance(ps), 'exclude');
-  ps['3'].excess_cagr_pp = -0.999;
+  ps['3'].excess_cagr_pp = -4.999;
   assert.equal(underperformance(ps), 'keep');
   ps['3'].excess_cagr_pp = 2;
   assert.equal(underperformance(ps), 'keep');
@@ -72,12 +72,12 @@ test('missing, relisted or invalid ten-year data cannot cause exclusion', () => 
   }
   assert.equal(underperformance(undefined), 'insufficient');
 });
-test('shifted-date exclusion needs all 108 comparisons to be at least one point below', () => {
+test('shifted-date exclusion needs all 108 comparisons to be at least five points below', () => {
   const ps = losingPeriods();
   assert.equal(underperformance(ps, 'rolling'), 'exclude');
-  ps['5'].rolling.max_gap = -1;
+  ps['5'].rolling.max_gap = -5;
   assert.equal(underperformance(ps, 'rolling'), 'exclude');
-  ps['5'].rolling.max_gap = -0.99;
+  ps['5'].rolling.max_gap = -4.99;
   assert.equal(underperformance(ps, 'rolling'), 'keep');
   assert.equal(underperformance(ps), 'exclude');
   ps['5'].rolling.max_gap = 1;

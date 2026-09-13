@@ -2490,8 +2490,8 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const excluded = STOCKS.filter(s => ComparisonMath.underperformance(_topixComparisons[s.code], rule) === 'exclude');
     const insufficient = STOCKS.filter(s => ComparisonMath.underperformance(_topixComparisons[s.code], rule) === 'insufficient');
     document.getElementById('market-filter-criterion').textContent = rule === 'rolling'
-      ? '3年・5年・10年のすべてで年率1ポイント以上下回り、さらに最新終点と直前35か月の月末を終点にした比較でも、全108期間で年率1ポイント以上下回る銘柄が対象です。'
-      : '最新時点からの3年・5年・10年のすべてで、配当込みリターンの年率がETFより1ポイント以上低い銘柄が対象です。1つでもこの条件を満たさない期間があれば残します。';
+      ? `3年・5年・10年のすべてで年率${ComparisonMath.EXCLUSION_GAP_PP}ポイント以上下回り、さらに最新終点と直前35か月の月末を終点にした比較でも、全108期間で年率${ComparisonMath.EXCLUSION_GAP_PP}ポイント以上下回る銘柄が対象です。`
+      : `最新時点からの3年・5年・10年のすべてで、配当込みリターンの年率がETFより${ComparisonMath.EXCLUSION_GAP_PP}ポイント以上低い銘柄が対象です。1つでもこの条件を満たさない期間があれば残します。`;
     document.getElementById('market-filter-status').textContent = !_topixLoaded
       ? '比較データを取得中…（取得前は非表示にしません）'
       : `${enabled ? `TOPIX条件で ${excluded.length} / ${STOCKS.length}銘柄を非表示` : `非表示はオフ（対象 ${excluded.length} / ${STOCKS.length}銘柄）`}。履歴不足 ${insufficient.length}銘柄は判定保留で残します。52週レンジ条件は別に適用します。`;

@@ -1,5 +1,6 @@
 // 純粋な計算関数。ブラウザーとNodeのテストで同じ実装を使う。
 const ComparisonMath = (() => {
+  const EXCLUSION_GAP_PP = 5;
   function validPeriod(p) {
     return Boolean(p?.available && ['stock_return', 'benchmark_return', 'excess_pp', 'stock_cagr', 'benchmark_cagr', 'excess_cagr_pp'].every(key => Number.isFinite(p[key])));
   }
@@ -20,8 +21,8 @@ const ComparisonMath = (() => {
     if (!selected.every(validPeriod)) return 'insufficient';
     if (rule === 'rolling' && !selected.every(p => p.rolling?.complete === true
         && p.rolling.count === 36 && Number.isFinite(p.rolling.max_gap))) return 'insufficient';
-    const below = selected.every(p => p.excess_cagr_pp <= -1);
-    return below && (rule === 'latest' || selected.every(p => p.rolling.max_gap <= -1))
+    const below = selected.every(p => p.excess_cagr_pp <= -EXCLUSION_GAP_PP);
+    return below && (rule === 'latest' || selected.every(p => p.rolling.max_gap <= -EXCLUSION_GAP_PP))
       ? 'exclude' : 'keep';
   }
   function benefitScenario({ price, shares, annualValue, years, stockCagr, benchmarkCagr }) {
@@ -41,6 +42,6 @@ const ComparisonMath = (() => {
     if (!Object.values(result).every(Number.isFinite)) return null;
     return {...result, covers: difference >= -initial * 1e-10};
   }
-  return {validPeriod, matches, underperformance, benefitScenario};
+  return {EXCLUSION_GAP_PP, validPeriod, matches, underperformance, benefitScenario};
 })();
 if (typeof module !== 'undefined') module.exports = ComparisonMath;
