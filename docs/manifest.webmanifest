@@ -1,0 +1,15 @@
+{
+  "id": "/yutai-app/",
+  "name": "優待ウォッチリスト",
+  "short_name": "優待ウォッチ",
+  "lang": "ja",
+  "start_url": "/yutai-app/?source=home",
+  "scope": "/yutai-app/",
+  "display": "standalone",
+  "background_color": "#f4f8fb",
+  "theme_color": "#25455e",
+  "icons": [
+    {"src":"icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}

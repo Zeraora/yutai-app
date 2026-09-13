@@ -2133,6 +2133,17 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   .benefit-result dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.45em 1em; font-size: 0.9em; }
   .benefit-result dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
   .benefit-sim-btn { white-space: normal; }
+  .notification-panel { margin: 1em 0; border: 1px solid #c9dbe6; background: white; border-radius: 6px; padding: 0.8em 1em; }
+  .notification-panel summary { cursor: pointer; color: #25455e; font-weight: bold; }
+  .notification-panel p, .notification-panel label { font-size: 0.9em; line-height: 1.6; }
+  .notification-note { color: #586772; }
+  #notification-badge { font-size: 0.8em; margin-left: 0.5em; padding: 2px 6px; background: #eaf1f6; border-radius: 4px; }
+  #notification-code { display: block; font: inherit; font-size: 16px; max-width: 100%; box-sizing: border-box; padding: 0.5em; border: 1px solid #bbb; border-radius: 4px; margin-top: 0.4em; }
+  .notification-actions { display: flex; gap: 0.6em; flex-wrap: wrap; }
+  .notification-actions button { font: inherit; padding: 0.55em 0.8em; border: 1px solid #25455e; border-radius: 4px; background: #25455e; color: white; cursor: pointer; }
+  .notification-actions button:disabled { opacity: 0.5; cursor: default; }
+  .notification-actions button[hidden] { display: none; }
+  #notification-stop { background: white; color: #25455e; }
   .market-filter { margin: 1em 0; padding: 1em; border: 1px solid #c9dbe6; border-radius: 6px; background: #f4f8fb; }
   .market-filter-toggle { display: flex; align-items: start; gap: 0.6em; font-weight: bold; color: #25455e; }
   .market-filter-toggle input { width: 1.15em; height: 1.15em; flex-shrink: 0; }
@@ -2157,6 +2168,11 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     .benefit-inputs label, .benefit-inputs input, .benefit-inputs select { width: 100%; }
   }
 </style>
+<link rel="manifest" href="/yutai-app/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/yutai-app/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="優待ウォッチ">
+<meta name="theme-color" content="#25455e">
 </head>
 <body>
 
@@ -2178,6 +2194,20 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
   <button id="f-clear" style="padding:0.35em 0.8em;background:#95a5a6;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.85em">条件クリア</button>
 
 </div>
+
+<details id="notifications" class="notification-panel">
+  <summary>iPhoneへの入れ替わり通知 <span id="notification-badge">オフ</span></summary>
+  <p>毎回の更新後、デフォルト条件の候補に追加・除外があった日だけ通知します。件数が同じでも中身が変われば通知します。</p>
+  <p class="notification-note">通知条件：52週レンジ30％以下・3年／5年／10年すべてで年率5pt以上劣る銘柄を除外。画面で変更した条件とは連動しません。</p>
+  <p id="notification-install">iPhoneではSafariの共有ボタンから「ホーム画面に追加」し、追加したアプリを開いて設定してください。</p>
+  <label id="notification-code-row">登録コード <input id="notification-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="24" placeholder="案内されたコード"></label>
+  <p id="notification-status" role="status">通知設定を確認中…</p>
+  <div class="notification-actions">
+    <button type="button" id="notification-enable" disabled>通知を受け取る</button>
+    <button type="button" id="notification-test" hidden>テスト通知</button>
+    <button type="button" id="notification-stop" hidden>通知を停止する</button>
+  </div>
+</details>
 
 <div class="market-filter">
   <label class="market-filter-toggle"><input type="checkbox" id="f-hide-underperformers" checked> TOPIXに全期間で明らかに劣る銘柄を非表示</label>
@@ -2783,11 +2813,11 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     const fRangePosMax = parseFloat(document.getElementById('f-rangepos-max').value);
     let hidden = 0;
     const enriched = enrichedAll.filter(e => {
-      if (document.getElementById('f-hide-underperformers').checked
-          && ComparisonMath.underperformance(_topixComparisons[e.s.code], document.getElementById('f-topix-rule').value) === 'exclude') {
-        hidden++; return false;
-      }
-      if (!isNaN(fRangePosMax) && e.rangePos != null && e.rangePos > fRangePosMax) {
+      if (!ComparisonMath.passesWatchlist({rangePos: e.rangePos, periods: _topixComparisons[e.s.code]}, {
+        rangeMax: fRangePosMax,
+        hide: document.getElementById('f-hide-underperformers').checked,
+        rule: document.getElementById('f-topix-rule').value,
+      })) {
         hidden++; return false;
       }
       return true;
@@ -3066,7 +3096,13 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
     document.getElementById('topix-view').open = true;
   }
   else if (location.hash === '#stocks') switchView('stock-list-view');
+  if (new URLSearchParams(location.search).get('notification') === '1') {
+    document.getElementById('f-rangepos-max').value = '30';
+    document.getElementById('f-hide-underperformers').checked = true;
+    document.getElementById('f-topix-rule').value = 'latest';
+  }
   refreshPrices();
+  // __NOTIFICATIONS__
 </script>
 
 </body>
@@ -3077,6 +3113,12 @@ WATCHLIST_HTML = r"""<!DOCTYPE html>
 WATCHLIST_HTML = WATCHLIST_HTML.replace(
     "// __COMPARISON_MATH__",
     (Path(__file__).parent / "comparison.js").read_text(encoding="utf-8"),
+)
+
+
+WATCHLIST_HTML = WATCHLIST_HTML.replace(
+    "// __NOTIFICATIONS__",
+    (Path(__file__).parent / "notifications.js").read_text(encoding="utf-8"),
 )
 
 

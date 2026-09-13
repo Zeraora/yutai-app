@@ -12,6 +12,9 @@ WATCHLIST_HTML をベースに「データ埋め込み済み・編集機能な�
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -137,6 +140,18 @@ def main() -> None:
     embedded_json = json.dumps(embedded, ensure_ascii=False)
     override = STATIC_OVERRIDE_TEMPLATE.replace("__EMBEDDED__", embedded_json)
     html = html.replace("<script>", override + "<script>", 1)
+
+    node = os.environ.get("NODE_BINARY") or shutil.which("node")
+    if not node:
+        raise RuntimeError("通知候補の生成にはNode.jsが必要です")
+    snapshot = subprocess.run(
+        [node, str(Path(app.__file__).parent / "notification_snapshot.cjs")],
+        input=json.dumps({"stocks": starred, "data": embedded, "generatedAt": datetime.now(JST).isoformat()}),
+        text=True, capture_output=True, check=True, timeout=30,
+    ).stdout
+    # Non-executable machine-readable state, read only after a successful publication.
+    snapshot = snapshot.replace("<", "\\u003c")
+    html = html.replace("</head>", '<script type="application/json" id="watchlist-notification-snapshot">' + snapshot + '</script>\n</head>', 1)
 
     # 出力
     out_dir = Path(__file__).parent / "docs"

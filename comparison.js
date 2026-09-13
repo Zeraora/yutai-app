@@ -25,6 +25,10 @@ const ComparisonMath = (() => {
     return below && (rule === 'latest' || selected.every(p => p.rolling.max_gap <= -EXCLUSION_GAP_PP))
       ? 'exclude' : 'keep';
   }
+  function passesWatchlist({rangePos, periods}, {rangeMax = 30, hide = true, rule = 'latest'} = {}) {
+    if (hide && underperformance(periods, rule) === 'exclude') return false;
+    return !Number.isFinite(rangeMax) || rangePos == null || rangePos <= rangeMax;
+  }
   function benefitScenario({ price, shares, annualValue, years, stockCagr, benchmarkCagr }) {
     if (![price, shares, annualValue, years, stockCagr, benchmarkCagr].every(Number.isFinite)
         || price <= 0 || shares <= 0 || !Number.isInteger(shares) || annualValue < 0
@@ -42,6 +46,6 @@ const ComparisonMath = (() => {
     if (!Object.values(result).every(Number.isFinite)) return null;
     return {...result, covers: difference >= -initial * 1e-10};
   }
-  return {EXCLUSION_GAP_PP, validPeriod, matches, underperformance, benefitScenario};
+  return {EXCLUSION_GAP_PP, validPeriod, matches, underperformance, passesWatchlist, benefitScenario};
 })();
 if (typeof module !== 'undefined') module.exports = ComparisonMath;
